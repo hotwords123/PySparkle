@@ -479,7 +479,9 @@ target_with_star_atom
 
 star_atom
     : NAME
-    | '(' star_target ')';
+    | '(' star_target ')'
+    | '(' star_targets? ')'
+    | '[' star_targets? ']';
 
 single_target
     : single_subscript_attribute_target
