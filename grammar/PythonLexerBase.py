@@ -187,8 +187,8 @@ class PythonLexerBase(Lexer):
             self.__create_and_emit_token(self.DEDENT, text="<DEDENT>")
 
     def __report_error(self, message: str):
-        listenr: ProxyErrorListener = self.getErrorListenerDispatch()
-        listenr.syntaxError(
+        listener: ProxyErrorListener = self.getErrorListenerDispatch()
+        listener.syntaxError(
             self,
             self.__cur_token,
             self.__cur_token.line,
