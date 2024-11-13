@@ -16,7 +16,11 @@ file: statements? EOF;
 
 statements: statement+;
 
-statement: compound_stmt | simple_stmts;
+statement
+    : compound_stmt
+    | simple_stmts
+    | invalid_block
+    | invalid_token NEWLINE;
 
 simple_stmts: simple_stmt (';' simple_stmt)* (';')? NEWLINE;
 
@@ -46,6 +50,59 @@ compound_stmt
     | try_stmt
     | while_stmt
     // | match_stmt
+    ;
+
+invalid_block: INDENT statements DEDENT;
+
+invalid_token
+    : 'else'
+    | 'except'
+    | 'in'
+    | 'finally'
+    | 'is'
+    | 'and'
+    | 'as'
+    | 'elif'
+    | 'or'
+    | '/'
+    | '//'
+    | '%'
+    | '<<'
+    | '>>'
+    | '&'
+    | '|'
+    | '^'
+    | ':='
+    | '<'
+    | '>'
+    | '<='
+    | '>='
+    | '=='
+    | '!='
+    | ')'
+    | ']'
+    | '}'
+    | ','
+    | ':'
+    | '!'
+    | '.'
+    | ';'
+    | '='
+    | '->'
+    | '+='
+    | '-='
+    | '*='
+    | '/='
+    | '//='
+    | '%='
+    | '@='
+    | '&='
+    | '|='
+    | '^='
+    | '>>='
+    | '<<='
+    | '**='
+    | ERROR
     ;
 
 // SIMPLE STATEMENTS
