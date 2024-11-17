@@ -530,8 +530,8 @@ star_target
     : STAR? target_with_star_atom;
 
 target_with_star_atom
-    : t_primary '.' NAME
-    | t_primary '[' slices ']'
+    : primary '.' NAME
+    | primary '[' slices ']'
     | star_atom;
 
 star_atom
@@ -546,15 +546,8 @@ single_target
     | '(' single_target ')';
 
 single_subscript_attribute_target
-    : t_primary '.' NAME
-    | t_primary '[' slices ']';
-
-t_primary
-    : t_primary '.' NAME
-    | t_primary '[' slices ']'
-    | t_primary genexp
-    | t_primary '(' arguments? ')'
-    | atom;
+    : primary '.' NAME
+    | primary '[' slices ']';
 
 // Targets for del statements
 // --------------------------
@@ -563,8 +556,8 @@ del_targets
     : del_target (',' del_target)* ','?;
 
 del_target
-    : t_primary '.' NAME
-    | t_primary '[' slices ']'
+    : primary '.' NAME
+    | primary '[' slices ']'
     | del_t_atom;
 
 del_t_atom
