@@ -21,3 +21,9 @@ bash antlr.sh
 ```sh
 python driver.py input.py
 ```
+
+### Test
+
+```sh
+bash test.sh
+```
