@@ -1,5 +1,4 @@
 import sys
-import json
 import yaml
 from antlr4 import *
 from antlr4.Token import CommonToken
@@ -14,6 +13,9 @@ class PythonVisitor(PythonParserVisitor):
 
     def visitTerminal(self, node: TerminalNode) -> dict:
         return {get_token_name(node.getSymbol()): node.getText()}
+
+    def visitErrorNode(self, node: ErrorNode) -> dict:
+        return {"error_" + get_token_name(node.getSymbol()): node.getText()}
 
 
 def get_rule_name(rule: RuleContext) -> str:
