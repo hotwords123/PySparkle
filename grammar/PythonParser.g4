@@ -222,7 +222,7 @@ star_etc
     | '*' (',' param_maybe_default)+ (',' kwds?)?
     | kwds;
 
-kwds: '**' param_no_default;
+kwds: '**' param_no_default ','?;
 
 param_no_default: param;
 param_no_default_star_annotation: param_star_annotation;
@@ -438,7 +438,7 @@ group
 
 // TODO: f-strings
 
-string: STRING_LITERAL;
+string: STRING_LITERAL | BYTES_LITERAL;
 strings: string+;
 
 number: INTEGER | FLOAT_NUMBER | IMAG_NUMBER;
