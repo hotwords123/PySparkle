@@ -270,9 +270,9 @@ with_item: expression ('as' star_target)?;
 // -------------
 
 try_stmt
-    : 'try' ':' block finally_block
-    | 'try' ':' block except_block+ else_block? finally_block?
-    | 'try' ':' block except_star_block+ else_block? finally_block?;
+    : 'try' ':' block (finally_block
+        | except_block+ else_block? finally_block?
+        | except_star_block+ else_block? finally_block?);
 
 // Except statement
 // ----------------
