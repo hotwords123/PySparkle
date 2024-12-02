@@ -16,16 +16,16 @@ class PythonErrorStrategy(DefaultErrorStrategy):
 
     STATEMENT_RULES = {
         PythonParser.RULE_statement,
-        PythonParser.RULE_compound_stmt,
-        PythonParser.RULE_simple_stmts,
-        PythonParser.RULE_function_def,
-        PythonParser.RULE_if_stmt,
-        PythonParser.RULE_class_def,
-        PythonParser.RULE_with_stmt,
-        PythonParser.RULE_for_stmt,
-        PythonParser.RULE_try_stmt,
-        PythonParser.RULE_while_stmt,
-        # PythonParser.RULE_match_stmt,
+        PythonParser.RULE_compoundStmt,
+        PythonParser.RULE_simpleStmts,
+        PythonParser.RULE_functionDef,
+        PythonParser.RULE_ifStmt,
+        PythonParser.RULE_classDef,
+        PythonParser.RULE_withStmt,
+        PythonParser.RULE_forStmt,
+        PythonParser.RULE_tryStmt,
+        PythonParser.RULE_whileStmt,
+        # PythonParser.RULE_matchStmt,
     }
 
     def singleTokenDeletion(self, recognizer: PythonParser):

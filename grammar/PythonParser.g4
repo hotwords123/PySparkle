@@ -17,44 +17,44 @@ file: statements? EOF;
 statements: statement+;
 
 statement
-    : compound_stmt
-    | simple_stmts
-    | invalid_block
-    | invalid_token NEWLINE;
+    : compoundStmt
+    | simpleStmts
+    | invalidBlock
+    | invalidToken NEWLINE;
 
-simple_stmts: simple_stmt (';' simple_stmt)* (';')? NEWLINE;
+simpleStmts: simpleStmt (';' simpleStmt)* (';')? NEWLINE;
 
-simple_stmt
+simpleStmt
     : assignment
-    // | type_alias
-    | star_expressions
-    | return_stmt
-    | import_stmt
-    | raise_stmt
+    // | typeAlias
+    | starExpressions
+    | returnStmt
+    | importStmt
+    | raiseStmt
     | 'pass'
-    | del_stmt
-    | yield_stmt
-    | assert_stmt
+    | delStmt
+    | yieldStmt
+    | assertStmt
     | 'break'
     | 'continue'
-    | global_stmt
-    | nonlocal_stmt
+    | globalStmt
+    | nonlocalStmt
     ;
 
-compound_stmt
-    : function_def
-    | if_stmt
-    | class_def
-    | with_stmt
-    | for_stmt
-    | try_stmt
-    | while_stmt
-    // | match_stmt
+compoundStmt
+    : functionDef
+    | ifStmt
+    | classDef
+    | withStmt
+    | forStmt
+    | tryStmt
+    | whileStmt
+    // | matchStmt
     ;
 
-invalid_block: INDENT statements DEDENT;
+invalidBlock: INDENT statements DEDENT;
 
-invalid_token
+invalidToken
     : 'else'
     | 'except'
     | 'in'
@@ -109,12 +109,12 @@ invalid_token
 // =================
 
 assignment
-    : (NAME | '(' single_target ')' | single_subscript_attribute_target)
-        ':' expression ('=' annotated_rhs)?
-    | (star_targets '=')+ (yield_expr | star_expressions)
-    | single_target augassign (yield_expr | star_expressions);
+    : (NAME | '(' singleTarget ')' | singleSubscriptAttributeTarget)
+        ':' expression ('=' annotatedRhs)?
+    | (starTargets '=')+ (yieldExpr | starExpressions)
+    | singleTarget augassign (yieldExpr | starExpressions);
 
-annotated_rhs: yield_expr | star_expressions;
+annotatedRhs: yieldExpr | starExpressions;
 
 augassign
     : '+='
@@ -131,43 +131,43 @@ augassign
     | '**='
     | '//=';
 
-return_stmt: 'return' star_expressions?;
+returnStmt: 'return' starExpressions?;
 
-raise_stmt: 'raise' (expression ('from' expression)?)?;
+raiseStmt: 'raise' (expression ('from' expression)?)?;
 
-global_stmt: 'global' NAME (',' NAME)*;
+globalStmt: 'global' NAME (',' NAME)*;
 
-nonlocal_stmt: 'nonlocal' NAME (',' NAME)*;
+nonlocalStmt: 'nonlocal' NAME (',' NAME)*;
 
-del_stmt: 'del' del_targets;
+delStmt: 'del' delTargets;
 
-yield_stmt: yield_expr;
+yieldStmt: yieldExpr;
 
-assert_stmt: 'assert' expression (',' expression)?;
+assertStmt: 'assert' expression (',' expression)?;
 
-import_stmt: import_name | import_from;
+importStmt: importName | importFrom;
 
 // Import statements
 // -----------------
 
-import_name: 'import' dotted_as_names;
-import_from
-    : 'from' ('.' | '...')* dotted_name 'import' import_from_targets
-    | 'from' ('.' | '...')+ 'import' import_from_targets;
-import_from_targets
-    : '(' import_from_as_names ','? ')'
-    | import_from_as_names
+importName: 'import' dottedAsNames;
+importFrom
+    : 'from' ('.' | '...')* dottedName 'import' importFromTargets
+    | 'from' ('.' | '...')+ 'import' importFromTargets;
+importFromTargets
+    : '(' importFromAsNames ','? ')'
+    | importFromAsNames
     | '*';
-import_from_as_names
-    : import_from_as_name (',' import_from_as_name)*;
-import_from_as_name
+importFromAsNames
+    : importFromAsName (',' importFromAsName)*;
+importFromAsName
     : NAME ('as' NAME)?;
-dotted_as_names
-    : dotted_as_name (',' dotted_as_name)*;
-dotted_as_name:
-    | dotted_name ('as' NAME)?;
-dotted_name
-    : dotted_name '.' NAME
+dottedAsNames
+    : dottedAsName (',' dottedAsName)*;
+dottedAsName:
+    | dottedName ('as' NAME)?;
+dottedName
+    : dottedName '.' NAME
     | NAME;
 
 // COMPOUND STATEMENTS
@@ -178,110 +178,110 @@ dotted_name
 
 block
     : NEWLINE INDENT statements DEDENT
-    | simple_stmts;
+    | simpleStmts;
 
-decorators: ('@' named_expression NEWLINE)+;
+decorators: ('@' namedExpression NEWLINE)+;
 
 // Class definitions
 // -----------------
 
-class_def
-    : decorators? 'class' NAME type_params? ('(' arguments? ')')?
+classDef
+    : decorators? 'class' NAME typeParams? ('(' arguments? ')')?
         ':' block;
 
 // Function definitions
 // --------------------
 
-function_def
-    : decorators? ASYNC? 'def' NAME type_params? '(' parameters? ')'
+functionDef
+    : decorators? ASYNC? 'def' NAME typeParams? '(' parameters? ')'
         ('->' expression)? ':' block;
 
 // Function parameters
 // -------------------
 
 parameters
-    : slash_no_default (',' param_no_default)* (',' param_with_default)*
-        (',' star_etc?)?
-    | slash_with_default (',' param_with_default)*
-        (',' star_etc?)?
-    | param_no_default (',' param_no_default)* (',' param_with_default)*
-        (',' star_etc?)?
-    | param_with_default (',' param_with_default)*
-        (',' star_etc?)?
-    | star_etc;
+    : slashNoDefault (',' paramNoDefault)* (',' paramWithDefault)*
+        (',' starEtc?)?
+    | slashWithDefault (',' paramWithDefault)*
+        (',' starEtc?)?
+    | paramNoDefault (',' paramNoDefault)* (',' paramWithDefault)*
+        (',' starEtc?)?
+    | paramWithDefault (',' paramWithDefault)*
+        (',' starEtc?)?
+    | starEtc;
 
-slash_no_default
-    : param_no_default (',' param_no_default)* ',' '/';
-slash_with_default
-    : param_no_default (',' param_no_default)* (',' param_with_default)+ ',' '/'
-    | param_with_default (',' param_with_default)* ',' '/';
+slashNoDefault
+    : paramNoDefault (',' paramNoDefault)* ',' '/';
+slashWithDefault
+    : paramNoDefault (',' paramNoDefault)* (',' paramWithDefault)+ ',' '/'
+    | paramWithDefault (',' paramWithDefault)* ',' '/';
 
-star_etc
-    : '*' (param_no_default | param_no_default_star_annotation)
-        (',' param_maybe_default)* (',' kwds?)?
-    | '*' (',' param_maybe_default)+ (',' kwds?)?
+starEtc
+    : '*' (paramNoDefault | paramNoDefaultStarAnnotation)
+        (',' paramMaybeDefault)* (',' kwds?)?
+    | '*' (',' paramMaybeDefault)+ (',' kwds?)?
     | kwds;
 
-kwds: '**' param_no_default ','?;
+kwds: '**' paramNoDefault ','?;
 
-param_no_default: param;
-param_no_default_star_annotation: param_star_annotation;
-param_with_default: param default;
-param_maybe_default: param default?;
+paramNoDefault: param;
+paramNoDefaultStarAnnotation: paramStarAnnotation;
+paramWithDefault: param default;
+paramMaybeDefault: param default?;
 
 param: NAME annotation?;
-param_star_annotation: NAME star_annotation;
+paramStarAnnotation: NAME starAnnotation;
 annotation: ':' expression;
-star_annotation: ':' star_expression;
+starAnnotation: ':' starExpression;
 default: '=' expression;
 
 // If statement
 // ------------
 
-if_stmt
-    : 'if' named_expression ':' block (elif_stmt | else_block)?;
-elif_stmt
-    : 'elif' named_expression ':' block (elif_stmt | else_block)?;
-else_block
+ifStmt
+    : 'if' namedExpression ':' block (elifStmt | elseBlock)?;
+elifStmt
+    : 'elif' namedExpression ':' block (elifStmt | elseBlock)?;
+elseBlock
     : 'else' ':' block;
 
 // While statement
 // ---------------
 
-while_stmt
-    : 'while' named_expression ':' block else_block?;
+whileStmt
+    : 'while' namedExpression ':' block elseBlock?;
 
 // For statement
 // -------------
 
-for_stmt
-    : ASYNC? 'for' star_targets 'in' star_expressions ':' block else_block?;
+forStmt
+    : ASYNC? 'for' starTargets 'in' starExpressions ':' block elseBlock?;
 
 // With statement
 // --------------
 
-with_stmt
-    : ASYNC? 'with' '(' with_item (',' with_item)* ','? ')' ':' block
-    | ASYNC? 'with' with_item (',' with_item)* ':' block;
+withStmt
+    : ASYNC? 'with' '(' withItem (',' withItem)* ','? ')' ':' block
+    | ASYNC? 'with' withItem (',' withItem)* ':' block;
 
-with_item: expression ('as' star_target)?;
+withItem: expression ('as' starTarget)?;
 
 // Try statement
 // -------------
 
-try_stmt
-    : 'try' ':' block (finally_block
-        | except_block+ else_block? finally_block?
-        | except_star_block+ else_block? finally_block?);
+tryStmt
+    : 'try' ':' block (finallyBlock
+        | exceptBlock+ elseBlock? finallyBlock?
+        | exceptStarBlock+ elseBlock? finallyBlock?);
 
 // Except statement
 // ----------------
 
-except_block
+exceptBlock
     : 'except' (expression ('as' NAME)?)? ':' block;
-except_star_block
+exceptStarBlock
     : 'except' '*' expression ('as' NAME)? ':' block;
-finally_block
+finallyBlock
     : 'finally' ':' block;
 
 // Match statement
@@ -292,23 +292,23 @@ finally_block
 // Type statement
 // --------------
 
-// type_alias
+// typeAlias
 //     : 'type' NAME '=' expression;
 
 // Type parameter declaration
 // --------------------------
 
-type_params
-    : '[' type_param (',' type_param)* ','? ']';
+typeParams
+    : '[' typeParam (',' typeParam)* ','? ']';
 
-type_param
-    : NAME type_param_bound? type_param_default?
-    | '*' NAME type_param_starred_default?
-    | '**' NAME type_param_default?;
+typeParam
+    : NAME typeParamBound? typeParamDefault?
+    | '*' NAME typeParamStarredDefault?
+    | '**' NAME typeParamDefault?;
 
-type_param_bound: ':' expression;
-type_param_default: '=' expression;
-type_param_starred_default: '=' star_expression;
+typeParamBound: ':' expression;
+typeParamDefault: '=' expression;
+typeParamStarredDefault: '=' starExpression;
 
 // EXPRESSIONS
 // ===========
@@ -322,28 +322,28 @@ expression
     | lambdef
     ;
 
-yield_expr
-    : 'yield' ('from' expression | star_expressions)?;
+yieldExpr
+    : 'yield' ('from' expression | starExpressions)?;
 
-star_expressions
-    : star_expression (',' star_expression)* ','?;
+starExpressions
+    : starExpression (',' starExpression)* ','?;
 
-star_expression
+starExpression
     : '*' bitwise
     | expression;
 
-star_named_expressions
-    : star_named_expression (',' star_named_expression)* ','?;
+starNamedExpressions
+    : starNamedExpression (',' starNamedExpression)* ','?;
 
-star_named_expression
+starNamedExpression
     : '*' bitwise
-    | named_expression;
+    | namedExpression;
 
-assignment_expression
+assignmentExpression
     : NAME ':=' expression;
 
-named_expression
-    : assignment_expression
+namedExpression
+    : assignmentExpression
     | expression;
 
 logical
@@ -356,19 +356,19 @@ logical
 // --------------------
 
 comparison
-    : bitwise compare_op_bitwise_pair*;
+    : bitwise compareOpBitwisePair*;
 
-compare_op_bitwise_pair
-    : '==' bitwise       # compare_op_eq
-    | '!=' bitwise       # compare_op_noteq
-    | '<=' bitwise       # compare_op_lte
-    | '<' bitwise        # compare_op_lt
-    | '>=' bitwise       # compare_op_gte
-    | '>' bitwise        # compare_op_gt
-    | 'in' bitwise       # compare_op_in
-    | 'not' 'in' bitwise # compare_op_notin
-    | 'is' bitwise       # compare_op_is
-    | 'is' 'not' bitwise # compare_op_isnot
+compareOpBitwisePair
+    : '==' bitwise       # compareOpEq
+    | '!=' bitwise       # compareOpNoteq
+    | '<=' bitwise       # compareOpLte
+    | '<' bitwise        # compareOpLt
+    | '>=' bitwise       # compareOpGte
+    | '>' bitwise        # compareOpGt
+    | 'in' bitwise       # compareOpIn
+    | 'not' 'in' bitwise # compareOpNotin
+    | 'is' bitwise       # compareOpIs
+    | 'is' 'not' bitwise # compareOpIsnot
     ;
 
 // Bitwise operators
@@ -389,12 +389,12 @@ arithmetic
     | ('+' | '-' | '~') arithmetic
     | arithmetic ('*' | '/' | '//' | '%' | '@') arithmetic
     | arithmetic ('+' | '-') arithmetic
-    | await_primary;
+    | awaitPrimary;
 
 // Primary elements
 // ----------------
 
-await_primary
+awaitPrimary
     : AWAIT primary
     | primary;
 
@@ -407,11 +407,11 @@ primary
 
 slices
     : slice
-    | (slice | starred_expression) (',' (slice | starred_expression))* ','?;
+    | (slice | starredExpression) (',' (slice | starredExpression))* ','?;
 
 slice
     : expression? ':' expression? (':' expression)?
-    | named_expression;
+    | namedExpression;
 
 atom
     : NAME
@@ -426,43 +426,43 @@ atom
     | '...';
 
 group
-    : '(' (yield_expr | named_expression) ')';
+    : '(' (yieldExpr | namedExpression) ')';
 
 // Lambda functions
 // ----------------
 
 lambdef
-    : 'lambda' lambda_parameters? ':' expression;
+    : 'lambda' lambdaParameters? ':' expression;
 
-lambda_parameters
-    : lambda_slash_no_default (',' lambda_param_no_default)* (',' lambda_param_with_default)*
-        (',' lambda_star_etc?)?
-    | lambda_slash_with_default (',' lambda_param_with_default)*
-        (',' lambda_star_etc?)?
-    | lambda_param_no_default (',' lambda_param_no_default)* (',' lambda_param_with_default)*
-        (',' lambda_star_etc?)?
-    | lambda_param_with_default (',' lambda_param_with_default)*
-        (',' lambda_star_etc?)?
-    | lambda_star_etc;
+lambdaParameters
+    : lambdaSlashNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)*
+        (',' lambdaStarEtc?)?
+    | lambdaSlashWithDefault (',' lambdaParamWithDefault)*
+        (',' lambdaStarEtc?)?
+    | lambdaParamNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)*
+        (',' lambdaStarEtc?)?
+    | lambdaParamWithDefault (',' lambdaParamWithDefault)*
+        (',' lambdaStarEtc?)?
+    | lambdaStarEtc;
 
-lambda_slash_no_default
-    : lambda_param_no_default (',' lambda_param_no_default)* ',' '/';
+lambdaSlashNoDefault
+    : lambdaParamNoDefault (',' lambdaParamNoDefault)* ',' '/';
 
-lambda_slash_with_default
-    : lambda_param_no_default (',' lambda_param_no_default)* (',' lambda_param_with_default)+ ',' '/'
-    | lambda_param_with_default (',' lambda_param_with_default)* ',' '/';
+lambdaSlashWithDefault
+    : lambdaParamNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)+ ',' '/'
+    | lambdaParamWithDefault (',' lambdaParamWithDefault)* ',' '/';
 
-lambda_star_etc
-    : '*' lambda_param_no_default (',' lambda_param_maybe_default)* (',' lambda_kwds?)?
-    | '*' (',' lambda_param_maybe_default)+ (',' lambda_kwds?)?
-    | lambda_kwds;
+lambdaStarEtc
+    : '*' lambdaParamNoDefault (',' lambdaParamMaybeDefault)* (',' lambdaKwds?)?
+    | '*' (',' lambdaParamMaybeDefault)+ (',' lambdaKwds?)?
+    | lambdaKwds;
 
-lambda_kwds: '**' lambda_param_no_default ','?;
+lambdaKwds: '**' lambdaParamNoDefault ','?;
 
-lambda_param_no_default: lambda_param;
-lambda_param_with_default: lambda_param default;
-lambda_param_maybe_default: lambda_param default?;
-lambda_param: NAME;
+lambdaParamNoDefault: lambdaParam;
+lambdaParamWithDefault: lambdaParam default;
+lambdaParamMaybeDefault: lambdaParam default?;
+lambdaParam: NAME;
 
 // LITERALS
 // ========
@@ -475,24 +475,24 @@ strings: string+;
 number: INTEGER | FLOAT_NUMBER | IMAG_NUMBER;
 
 list
-    : '[' star_named_expressions? ']';
+    : '[' starNamedExpressions? ']';
 
 tuple
-    : '(' (star_named_expression ',' star_named_expressions?)? ')';
+    : '(' (starNamedExpression ',' starNamedExpressions?)? ')';
 
 set
-    : '{' star_named_expressions '}';
+    : '{' starNamedExpressions '}';
 
 // Dicts
 // -----
 
 dict
-    : '{' double_starred_kvpairs? '}';
+    : '{' doubleStarredKvpairs? '}';
 
-double_starred_kvpairs
-    : double_starred_kvpair (',' double_starred_kvpair)* ','?;
+doubleStarredKvpairs
+    : doubleStarredKvpair (',' doubleStarredKvpair)* ','?;
 
-double_starred_kvpair
+doubleStarredKvpair
     : '**' bitwise
     | kvpair;
 
@@ -501,22 +501,22 @@ kvpair: expression ':' expression;
 // Comprenhensions & Generators
 // ----------------------------
 
-for_if_clauses: for_if_clause+;
+forIfClauses: forIfClause+;
 
-for_if_clause
-    : ASYNC? 'for' star_targets 'in' logical ('if' logical)*;
+forIfClause
+    : ASYNC? 'for' starTargets 'in' logical ('if' logical)*;
 
 listcomp
-    : '[' named_expression for_if_clauses ']';
+    : '[' namedExpression forIfClauses ']';
 
 setcomp
-    : '{' named_expression for_if_clauses '}';
+    : '{' namedExpression forIfClauses '}';
 
 genexp
-    : '(' named_expression for_if_clauses ')';
+    : '(' namedExpression forIfClauses ')';
 
 dictcomp
-    : '{' kvpair for_if_clauses '}';
+    : '{' kvpair forIfClauses '}';
 
 // FUNCTION CALL ARGUMENTS
 // =======================
@@ -529,22 +529,22 @@ args
     | kwargs;
 
 arg
-    : starred_expression
-    | assignment_expression
+    : starredExpression
+    | assignmentExpression
     | expression;
 
 kwargs
-    : kwarg_or_starred (',' kwarg_or_starred)* (',' kwarg_or_double_starred)?
-    | kwarg_or_double_starred (',' kwarg_or_double_starred)*;
+    : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
+    | kwargOrDoubleStarred (',' kwargOrDoubleStarred)*;
 
-starred_expression
+starredExpression
     : '*' expression;
 
-kwarg_or_starred
+kwargOrStarred
     : NAME '=' expression
-    | starred_expression;
+    | starredExpression;
 
-kwarg_or_double_starred
+kwargOrDoubleStarred
     : NAME '=' expression
     | '**' expression;
 
@@ -554,45 +554,45 @@ kwarg_or_double_starred
 // General targets
 // ---------------
 
-star_targets
-    : star_target (',' star_target)* ','?;
+starTargets
+    : starTarget (',' starTarget)* ','?;
 
-star_target
-    : STAR? target_with_star_atom;
+starTarget
+    : STAR? targetWithStarAtom;
 
-target_with_star_atom
+targetWithStarAtom
     : primary '.' NAME
     | primary '[' slices ']'
-    | star_atom;
+    | starAtom;
 
-star_atom
+starAtom
     : NAME
-    | '(' star_target ')'
-    | '(' star_targets? ')'
-    | '[' star_targets? ']';
+    | '(' starTarget ')'
+    | '(' starTargets? ')'
+    | '[' starTargets? ']';
 
-single_target
-    : single_subscript_attribute_target
+singleTarget
+    : singleSubscriptAttributeTarget
     | NAME
-    | '(' single_target ')';
+    | '(' singleTarget ')';
 
-single_subscript_attribute_target
+singleSubscriptAttributeTarget
     : primary '.' NAME
     | primary '[' slices ']';
 
 // Targets for del statements
 // --------------------------
 
-del_targets
-    : del_target (',' del_target)* ','?;
+delTargets
+    : delTarget (',' delTarget)* ','?;
 
-del_target
+delTarget
     : primary '.' NAME
     | primary '[' slices ']'
-    | del_t_atom;
+    | delTargetAtom;
 
-del_t_atom
+delTargetAtom
     : NAME
-    | '(' del_target ')'
-    | '(' del_targets? ')'
-    | '[' del_targets? ']';
+    | '(' delTarget ')'
+    | '(' delTargets? ')'
+    | '[' delTargets? ']';
