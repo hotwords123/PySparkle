@@ -1,9 +1,10 @@
 import sys
+
 import yaml
 from antlr4 import *
 from antlr4.Token import CommonToken
 
-from grammar import PythonLexer, PythonParser, PythonParserVisitor, PythonErrorStrategy
+from grammar import PythonErrorStrategy, PythonLexer, PythonParser, PythonParserVisitor
 
 
 class PythonVisitor(PythonParserVisitor):

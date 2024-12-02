@@ -1,6 +1,6 @@
 from antlr4 import Token
-from antlr4.error.ErrorStrategy import DefaultErrorStrategy
 from antlr4.error.Errors import InputMismatchException
+from antlr4.error.ErrorStrategy import DefaultErrorStrategy
 
 from .PythonParser import PythonParser
 

@@ -1,9 +1,10 @@
-import sys
 import itertools
+import sys
 from typing import TextIO
+
 from antlr4 import InputStream, Lexer, Token
-from antlr4.Token import CommonToken
 from antlr4.Recognizer import ProxyErrorListener
+from antlr4.Token import CommonToken
 
 
 class PythonLexerBase(Lexer):

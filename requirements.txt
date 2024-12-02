@@ -1,7 +1,15 @@
 antlr4-python3-runtime==4.13.2
 antlr4-tools==0.2.1
+black==24.10.0
+click==8.1.7
+colorama==0.4.6
 dominate==2.9.1
 install-jdk==1.1.0
+isort==5.13.2
+mypy-extensions==1.0.0
+packaging==24.2
+pathspec==0.12.1
+platformdirs==4.3.6
 PyYAML==6.0.2
 setuptools==75.1.0
 wheel==0.44.0
