@@ -1,0 +1,64 @@
+.highlight {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
+.token-comment {
+  color: #6A9955;
+}
+
+.token-keyword {
+  color: #569CD6;
+}
+
+.token-control {
+  color: #C586C0;
+}
+
+.token-identifier {
+  color: #D4D4D4;
+}
+
+.token-variable {
+  color: #9CDCFE;
+}
+
+.token-field {
+  color: #9CDCFE;
+}
+
+.token-function {
+  color: #DCDCAA;
+}
+
+.token-class {
+  color: #4EC9B0;
+}
+
+.token-module {
+  color: #D7BA7D;
+}
+
+.token-constant {
+  color: #4FC1FF;
+}
+
+.token-string {
+  color: #CE9178;
+}
+
+.token-number {
+  color: #B5CEA8;
+}
+
+.token-operator {
+  color: #D4D4D4;
+}
+
+.token-delimiter {
+  color: #D4D4D4;
+}
+
+.token-error {
+  color: #F44747;
+}
