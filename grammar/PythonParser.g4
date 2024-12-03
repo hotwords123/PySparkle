@@ -109,12 +109,12 @@ invalidToken
 // =================
 
 assignment
-    : (NAME | '(' singleTarget ')' | singleSubscriptAttributeTarget)
-        ':' expression ('=' annotatedRhs)?
-    | (starTargets '=')+ (yieldExpr | starExpressions)
-    | singleTarget augassign (yieldExpr | starExpressions);
+    : singleTarget ':' expression ('=' assignmentRhs)?  # annotatedAssignment
+    | (starTargets '=')+ assignmentRhs                  # starredAssignment
+    | singleTarget augassign assignmentRhs              # augmentedAssignment
+    ;
 
-annotatedRhs: yieldExpr | starExpressions;
+assignmentRhs: yieldExpr | starExpressions;
 
 augassign
     : '+='
@@ -164,8 +164,8 @@ importFromAsName
     : NAME ('as' NAME)?;
 dottedAsNames
     : dottedAsName (',' dottedAsName)*;
-dottedAsName:
-    | dottedName ('as' NAME)?;
+dottedAsName
+    : dottedName ('as' NAME)?;
 dottedName
     : dottedName '.' NAME
     | NAME;
@@ -193,7 +193,7 @@ classDef
 // --------------------
 
 functionDef
-    : decorators? ASYNC? 'def' NAME typeParams? '(' parameters? ')'
+    : decorators? 'async'? 'def' NAME typeParams? '(' parameters? ')'
         ('->' expression)? ':' block;
 
 // Function parameters
@@ -255,14 +255,14 @@ whileStmt
 // -------------
 
 forStmt
-    : ASYNC? 'for' starTargets 'in' starExpressions ':' block elseBlock?;
+    : 'async'? 'for' starTargets 'in' starExpressions ':' block elseBlock?;
 
 // With statement
 // --------------
 
 withStmt
-    : ASYNC? 'with' '(' withItem (',' withItem)* ','? ')' ':' block
-    | ASYNC? 'with' withItem (',' withItem)* ':' block;
+    : 'async'? 'with' '(' withItem (',' withItem)* ','? ')' ':' block
+    | 'async'? 'with' withItem (',' withItem)* ':' block;
 
 withItem: expression ('as' starTarget)?;
 
@@ -359,17 +359,11 @@ comparison
     : bitwise compareOpBitwisePair*;
 
 compareOpBitwisePair
-    : '==' bitwise       # compareOpEq
-    | '!=' bitwise       # compareOpNoteq
-    | '<=' bitwise       # compareOpLte
-    | '<' bitwise        # compareOpLt
-    | '>=' bitwise       # compareOpGte
-    | '>' bitwise        # compareOpGt
-    | 'in' bitwise       # compareOpIn
-    | 'not' 'in' bitwise # compareOpNotin
-    | 'is' bitwise       # compareOpIs
-    | 'is' 'not' bitwise # compareOpIsnot
-    ;
+    : compareOp bitwise;
+
+compareOp
+    : '==' | '!=' | '<=' | '<' | '>=' | '>'
+    | 'in' | 'not' 'in' | 'is' | 'is' 'not';
 
 // Bitwise operators
 // -----------------
@@ -395,7 +389,7 @@ arithmetic
 // ----------------
 
 awaitPrimary
-    : AWAIT primary
+    : 'await' primary
     | primary;
 
 primary
@@ -405,13 +399,12 @@ primary
     | primary '[' slices ']'
     | atom;
 
-slices
-    : slice
-    | (slice | starredExpression) (',' (slice | starredExpression))* ','?;
+slices: slice (',' slice)* ','?;
 
 slice
     : expression? ':' expression? (':' expression)?
-    | namedExpression;
+    | namedExpression
+    | starredExpression;
 
 atom
     : NAME
@@ -504,7 +497,7 @@ kvpair: expression ':' expression;
 forIfClauses: forIfClause+;
 
 forIfClause
-    : ASYNC? 'for' starTargets 'in' logical ('if' logical)*;
+    : 'async'? 'for' starTargets 'in' logical ('if' logical)*;
 
 listcomp
     : '[' namedExpression forIfClauses ']';
