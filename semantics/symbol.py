@@ -12,7 +12,6 @@ class SymbolType(Enum):
     PARAMETER = "parameter"
     FUNCTION = "function"
     CLASS = "class"
-    MODULE = "module"
     IMPORTED = "import"
     GLOBAL = "global"
     NONLOCAL = "nonlocal"

@@ -1,10 +1,15 @@
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, TypedDict
 
 from grammar import PythonParser
 
 if TYPE_CHECKING:
     from .symbol import Symbol
+
+
+class TokenInfo(TypedDict, total=False):
+    kind: "TokenKind"
+    symbol: "Symbol"
 
 
 class TokenKind(Enum):
@@ -150,9 +155,3 @@ TOKEN_KIND_MAP = {
     for kind, token_types in TOKEN_KIND_SPEC.items()
     for token_type in token_types
 }
-
-
-class TokenInfo:
-    def __init__(self, kind: Optional[TokenKind], symbol: Optional["Symbol"] = None):
-        self.kind = kind
-        self.symbol = symbol

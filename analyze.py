@@ -10,7 +10,7 @@ from grammar import PythonErrorStrategy, PythonLexer, PythonParser
 from semantics.scope import ScopeType, SymbolTable
 from semantics.structure import PythonContext
 from semantics.token import TOKEN_KIND_MAP, TokenKind
-from semantics.visitor import PythonVisitorFirstPass, PythonVisitorSecondPass
+from semantics.visitor import PythonVisitor
 
 
 def get_rule_name(rule: RuleContext) -> str:
@@ -37,11 +37,8 @@ def main(args):
     global_scope = SymbolTable("<global>", ScopeType.GLOBAL, builtins_scope)
     context = PythonContext(global_scope)
 
-    visitor = PythonVisitorFirstPass(context)
-    visitor.visit(tree)
-
-    visitor = PythonVisitorSecondPass(context)
-    visitor.visit(tree)
+    visitor = PythonVisitor(context)
+    visitor.fullVisit(tree)
 
     doc = dominate.document(title="Python Code")
 
@@ -61,7 +58,7 @@ def main(args):
 
                     token_kind = None
                     if token_info := context.token_info.get(token):
-                        token_kind = token_info.kind
+                        token_kind = token_info.get('kind')
                     if token_kind is None:
                         token_kind = TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
 

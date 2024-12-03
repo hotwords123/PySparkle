@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
@@ -10,6 +10,10 @@ from .token import TokenInfo
 
 
 class PythonContext:
+    """
+    Represents the context of a Python module being analyzed.
+    """
+
     def __init__(self, global_scope: SymbolTable):
         self.global_scope: SymbolTable = global_scope
         self.current_scope: SymbolTable = global_scope
@@ -45,5 +49,13 @@ class PythonContext:
         assert (scope := self.current_scope.parent) is not None
         return self.scope_guard(scope)
 
-    def set_node_info(self, node: TerminalNode, info: TokenInfo):
-        self.token_info[node.getSymbol()] = info
+    def set_node_info(self, node: TerminalNode, /, **kwargs: Unpack[TokenInfo]):
+        token = node.getSymbol()
+        self.token_info.setdefault(token, TokenInfo()).update(**kwargs)
+
+    @contextmanager
+    def wrap_errors(self, error_cls: type[Exception]) -> Iterator[None]:
+        try:
+            yield
+        except error_cls as e:
+            self.errors.append(e)
