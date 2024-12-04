@@ -83,7 +83,6 @@ class SymbolTable:
     def iter_symbols(
         self,
         parents: bool = False,
-        skip_imports: bool = False,
         public_only: bool = False,
     ) -> Iterable[Symbol]:
         """
@@ -91,13 +90,11 @@ class SymbolTable:
 
         Args:
             parents: Whether to iterate over the parent scopes.
-            skip_imports: Whether to skip imported symbols.
             public_only: Whether to only iterate over public symbols.
 
         Yields:
             symbol: The next symbol in the scope.
         """
-        # TODO: https://typing.readthedocs.io/en/latest/spec/distributing.html#import-conventions
         if public_only:
             assert (
                 not parents and self.scope_type is ScopeType.GLOBAL
@@ -105,11 +102,8 @@ class SymbolTable:
 
         scope = self
         while scope is not None:
-            # TODO: Respect __all__ when public_only is True
-            for name, symbol in self.symbols.items():
-                if skip_imports and symbol.type is SymbolType.IMPORTED:
-                    continue
-                if public_only and name.startswith("_"):
+            for symbol in self.symbols.values():
+                if public_only and not symbol.public:
                     continue
                 yield symbol
 

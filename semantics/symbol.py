@@ -22,16 +22,21 @@ class Symbol:
         self,
         type_: SymbolType,
         name: str,
-        node: TerminalNode,
+        node: Optional[TerminalNode] = None,
+        *,
+        public: Optional[bool] = None,
+        target: Optional["Symbol"] = None,
         entity: Optional[Entity] = None,
     ):
         self.name = name
         self.type = type_
-        self.node = node
-        self.token: CommonToken = node.getSymbol()
-        self.entity = entity
+        self.public = public
 
-        self.target: Optional[Symbol] = None
+        self.node = node
+        self.token: Optional[CommonToken] = node and node.getSymbol()
+
+        self.target = target
+        self.entity = entity
 
     def __str__(self):
         return f"<{self.__class__.__name__}(name={self.name}, type={self.type})>"

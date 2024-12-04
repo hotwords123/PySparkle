@@ -1,64 +1,20 @@
 import sys
-from typing import NamedTuple
+from pathlib import Path
 
 import dominate
 import dominate.tags as dom
 from antlr4 import *
 from antlr4.Token import CommonToken
 from dominate.util import text as dom_text
-from typeshed_client import get_stub_file
+from typeshed_client import get_search_context
 
-from grammar import PythonErrorStrategy, PythonLexer, PythonParser
-from semantics.scope import ScopeType, SymbolTable, SymbolType
+from core.analysis import PythonAnalyzer
+from core.modules import PyModule
+from grammar import PythonParser
+from semantics.entity import ModuleEntity
+from semantics.scope import SymbolType
 from semantics.structure import PythonContext
 from semantics.token import TOKEN_KIND_MAP, TokenKind
-from semantics.visitor import PythonVisitor
-
-
-def get_rule_name(rule: RuleContext) -> str:
-    return PythonParser.ruleNames[rule.getRuleIndex()]
-
-
-def get_token_name(token: CommonToken) -> str:
-    if token.type == Token.EOF:
-        return "EOF"
-    return PythonParser.symbolicNames[token.type]
-
-
-class PythonSource(NamedTuple):
-    input_stream: FileStream
-    lexer: PythonLexer
-    stream: CommonTokenStream
-    parser: PythonParser
-    tree: ParserRuleContext
-
-    @classmethod
-    def parse(cls, filename: str) -> "PythonSource":
-        input_stream = FileStream(filename)
-        lexer = PythonLexer(input_stream)
-        stream = CommonTokenStream(lexer)
-        parser = PythonParser(stream)
-        parser._errHandler = PythonErrorStrategy()
-        tree = parser.file_()
-        return cls(input_stream, lexer, stream, parser, tree)
-
-
-def load_builtins() -> SymbolTable:
-    stub_file = get_stub_file("builtins")
-    source = PythonSource.parse(stub_file)
-
-    global_scope = SymbolTable("<global>", ScopeType.GLOBAL)
-    context = PythonContext(global_scope)
-
-    visitor = PythonVisitor(context)
-    visitor.first_pass(source.tree)
-    visitor.second_pass(source.tree)
-
-    builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
-    for symbol in global_scope.iter_symbols(skip_imports=True, public_only=True):
-        builtin_scope.define(symbol)
-
-    return builtin_scope
 
 
 def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
@@ -81,27 +37,41 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
                     # Unresolved symbols.
                     pass
 
+            if entity := symbol.entity:
+                if isinstance(entity, ModuleEntity):
+                    return TokenKind.MODULE
+
+                return TokenKind.VARIABLE
+
     return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
 
 
 def main(args):
+    source_path = Path(args.input)
     out_file = open(args.output, "w", newline="") if args.output else sys.stdout
 
+    assert "." not in source_path.stem, "source file name should not contain '.'"
+
+    # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-resolution-ordering
+    search_context = get_search_context()
+
+    search_paths = []
+    search_paths.append(source_path.parent)
+    search_paths.append(search_context.typeshed)
+    search_paths.extend(search_context.search_path)
+
+    analyzer = PythonAnalyzer(search_paths)
+
     if args.builtins:
-        print("Loading builtins...", file=sys.stderr)
-        builtins_scope = load_builtins()
+        analyzer.load_builtins()
     else:
-        builtins_scope = None
+        analyzer.builtins_loaded = True
 
-    print("Parsing input...", file=sys.stderr)
-    source = PythonSource.parse(args.input)
+    module = PyModule(source_path.stem, source_path)
+    analyzer.importer.load_module(module)
 
-    global_scope = SymbolTable("<global>", ScopeType.GLOBAL, builtins_scope)
-    context = PythonContext(global_scope)
-
-    visitor = PythonVisitor(context)
-    visitor.first_pass(source.tree)
-    visitor.second_pass(source.tree)
+    for error in module.context.errors:
+        print(error, file=sys.stderr)
 
     doc = dominate.document(title="Python Code")
 
@@ -111,7 +81,7 @@ def main(args):
     with doc:
         with dom.div(cls="highlight"):
             with dom.pre():
-                for token in source.stream.tokens:
+                for token in module.source.stream.tokens:
                     if token.type in {
                         PythonParser.INDENT,
                         PythonParser.DEDENT,
@@ -119,7 +89,7 @@ def main(args):
                     }:
                         continue
 
-                    token_kind = get_token_kind(context, token)
+                    token_kind = get_token_kind(module.context, token)
                     if token_kind is TokenKind.NONE:
                         dom_text(token.text)
                     else:

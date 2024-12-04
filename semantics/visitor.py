@@ -63,6 +63,7 @@ class PythonVisitor(PythonParserVisitor):
         self.pass_num = 1
         self.visit(tree)
         self._resolve_outer_symbols()
+        self._check_public_symbols()
 
     def second_pass(self, tree):
         """
@@ -83,6 +84,14 @@ class PythonVisitor(PythonParserVisitor):
 
             if resolved is not None and not resolved.is_outer():
                 symbol.target = resolved
+
+    def _check_public_symbols(self):
+        # TODO: Respect the __all__ list.
+        for symbol in self.context.global_scope.iter_symbols():
+            if symbol.name.startswith("_"):
+                symbol.public = False
+            elif symbol.public is None:
+                symbol.public = symbol.type is not SymbolType.IMPORTED
 
     def visitTerminal(self, node: TerminalNode):
         match node.getSymbol().type:
@@ -162,9 +171,9 @@ class PythonVisitor(PythonParserVisitor):
             targets: The import-from targets.
         """
         if as_names := ctx.importFromAsNames():
-            return self.visitImportFromAsNames(as_names)
+            return PyImportFromTargets(self.visitImportFromAsNames(as_names))
         else:
-            return ...
+            return PyImportFromTargets()
 
     # importFromAsNames: importFromAsName (',' importFromAsName)*;
     @_first_pass_only
@@ -197,7 +206,12 @@ class PythonVisitor(PythonParserVisitor):
             alias = self.visitName(alias_node)
 
             # The alias is defined in the current scope.
-            symbol = Symbol(SymbolType.IMPORTED, alias, alias_node)
+            # The import form `from Y import X as X` (a redundant symbol alias)
+            # re-exports symbol `X`.
+            # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-conventions
+            symbol = Symbol(
+                SymbolType.IMPORTED, alias, alias_node, public=name == alias
+            )
             self.context.set_node_info(name_node, symbol=symbol)
             self.context.set_node_info(alias_node, symbol=symbol)
 
@@ -222,7 +236,12 @@ class PythonVisitor(PythonParserVisitor):
             alias = self.visitName(alias_node)
 
             # The as-name is defined in the current scope.
-            symbol = Symbol(SymbolType.IMPORTED, alias, alias_node)
+            # The import form `import X as X` (a redundant module alias) re-exports
+            # symbol `X`.
+            # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-conventions
+            symbol = Symbol(
+                SymbolType.IMPORTED, alias, alias_node, public=path == [alias]
+            )
             # The name always refers to a module.
             self.context.set_node_info(alias_node, kind=TokenKind.MODULE, symbol=symbol)
 

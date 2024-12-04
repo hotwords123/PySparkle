@@ -1,6 +1,6 @@
 import dataclasses
 from contextlib import contextmanager
-from typing import Iterator, Literal, NamedTuple, Optional, Unpack
+from typing import Iterator, NamedTuple, Optional, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
@@ -98,11 +98,22 @@ class PyImportFrom(PyImport):
 
     Attributes:
         relative: The number of parent directories to import from.
-        targets: The list of names imported from the module, or `...` for all.
+        targets: The targets of the import statement.
     """
 
     relative: Optional[int]
     targets: "PyImportFromTargets"
+
+
+class PyImportFromTargets(NamedTuple):
+    """
+    Represents the targets of a `from` import statement.
+
+    Attributes:
+        as_names: The list of names imported from the module, or `None` for all.
+    """
+
+    as_names: Optional[list["PyImportFromAsName"]] = None
 
 
 class PyImportFromAsName(NamedTuple):
@@ -118,6 +129,3 @@ class PyImportFromAsName(NamedTuple):
     name: str
     alias: Optional[str]
     symbol: Symbol
-
-
-PyImportFromTargets = list[PyImportFromAsName] | Literal["..."]
