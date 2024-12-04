@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import Iterable, Optional
 
+from antlr4.Token import CommonToken
+
 from .base import SemanticError
 from .symbol import Symbol, SymbolType
 
@@ -41,12 +43,16 @@ class SymbolTable:
             symbol: The symbol to define.
         """
         if symbol.name in self.symbols:
-            raise DuplicateSymbolError(symbol, self)
+            raise PyDuplicateSymbolError(symbol, self)
         self.symbols[symbol.name] = symbol
         # print(f"Defined symbol {symbol.name} in scope {self.name}")
 
     def lookup(
-        self, name: str, parents: bool = True, globals: bool = True
+        self,
+        name: str,
+        parents: bool = True,
+        globals: bool = True,
+        raise_from: Optional[CommonToken] = None,
     ) -> Optional[Symbol]:
         """
         Looks up a symbol in the current scope and possibly its parents. Returns None if the
@@ -56,6 +62,10 @@ class SymbolTable:
             name: The name of the symbol to look up.
             parents: Whether to look up the symbol in the parent scopes.
             globals: Whether to look up the symbol in the global scope.
+            raise_from: The token to raise an error from if the symbol is not found.
+
+        Returns:
+            symbol: The symbol if found, or None if not found.
         """
         scope = self
         while scope is not None:
@@ -66,6 +76,8 @@ class SymbolTable:
             if not parents:
                 break
             scope = scope.parent
+        if raise_from is not None:
+            raise PySymbolNotFoundError(name, raise_from, self)
         return None
 
     def iter_symbols(
@@ -81,7 +93,11 @@ class SymbolTable:
             parents: Whether to iterate over the parent scopes.
             skip_imports: Whether to skip imported symbols.
             public_only: Whether to only iterate over public symbols.
+
+        Yields:
+            symbol: The next symbol in the scope.
         """
+        # TODO: https://typing.readthedocs.io/en/latest/spec/distributing.html#import-conventions
         if public_only:
             assert (
                 not parents and self.scope_type is ScopeType.GLOBAL
@@ -102,10 +118,22 @@ class SymbolTable:
             scope = scope.parent
 
 
-class DuplicateSymbolError(SemanticError):
+class PyNameError(SemanticError):
+    def __init__(self, token: CommonToken, scope: SymbolTable, message: str):
+        super().__init__(message, token)
+        self.scope = scope
+
+
+class PyDuplicateSymbolError(PyNameError):
     def __init__(self, symbol: Symbol, scope: SymbolTable):
         super().__init__(
-            f"Symbol {symbol.name} already defined in scope {scope.name}", symbol.token
+            symbol.token,
+            scope,
+            f"Symbol {symbol.name} already defined in scope {scope.name}",
         )
         self.symbol = symbol
-        self.scope = scope
+
+
+class PySymbolNotFoundError(PyNameError):
+    def __init__(self, name: str, token: CommonToken, scope: SymbolTable):
+        super().__init__(token, scope, f"Symbol {name} not found in scope {scope.name}")

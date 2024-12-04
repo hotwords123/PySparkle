@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from typing import Literal
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.tree.Tree import ErrorNode, TerminalNode
@@ -6,8 +7,14 @@ from antlr4.tree.Tree import ErrorNode, TerminalNode
 from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
-from .scope import DuplicateSymbolError, ScopeType
-from .structure import PythonContext
+from .scope import PyDuplicateSymbolError, ScopeType
+from .structure import (
+    PyImportFrom,
+    PyImportFromAsName,
+    PyImportFromTargets,
+    PyImportName,
+    PythonContext,
+)
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
 
@@ -50,6 +57,10 @@ class PythonVisitor(PythonParserVisitor):
                 return self.visitName(node)
 
     def visitName(self, node: TerminalNode) -> str:
+        """
+        Returns:
+            name: The name of the node.
+        """
         return node.getText()
 
     def visitErrorNode(self, node: ErrorNode):
@@ -68,7 +79,7 @@ class PythonVisitor(PythonParserVisitor):
                     name_node, kind=TokenKind.VARIABLE, symbol=symbol
                 )
 
-                with self.context.wrap_errors(DuplicateSymbolError):
+                with self.context.wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
 
             elif self.pass_num == 2:
@@ -92,7 +103,7 @@ class PythonVisitor(PythonParserVisitor):
                     name_node, kind=TokenKind.VARIABLE, symbol=symbol
                 )
 
-                with self.context.wrap_errors(DuplicateSymbolError):
+                with self.context.wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
 
             elif self.pass_num == 2:
@@ -106,64 +117,134 @@ class PythonVisitor(PythonParserVisitor):
                     if resolved is not None and not resolved.is_outer():
                         symbol.target = resolved
 
+    # importFrom
+    #   : 'from' ('.' | '...')* dottedName 'import' importFromTargets
+    #   | 'from' ('.' | '...')+ 'import' importFromTargets;
+    @_visitor_guard
+    def visitImportFrom(self, ctx: PythonParser.ImportFromContext):
+        num_dots = len(ctx.DOT()) + 3 * len(ctx.ELLIPSIS())
+        relative = num_dots - 1 if num_dots > 0 else None
+
+        if dotted_name := ctx.dottedName():
+            path = self.visitDottedName(dotted_name)
+        else:
+            path = []
+
+        targets = self.visitImportFromTargets(ctx.importFromTargets())
+
+        if self.pass_num == 1:
+            self.context.imports.append(PyImportFrom(path, relative, targets))
+
+        elif self.pass_num == 2:
+            "TODO: Resolve the import."
+
+    # importFromTargets
+    #   : '(' importFromAsNames ','? ')'
+    #   | importFromAsNames
+    #   | '*';
+    @_visitor_guard
+    def visitImportFromTargets(
+        self, ctx: PythonParser.ImportFromTargetsContext
+    ) -> PyImportFromTargets:
+        """
+        Returns:
+            targets: The import-from targets.
+        """
+        if as_names := ctx.importFromAsNames():
+            return self.visitImportFromAsNames(as_names)
+        else:
+            return ...
+
+    # importFromAsNames: importFromAsName (',' importFromAsName)*;
+    @_visitor_guard
+    def visitImportFromAsNames(
+        self, ctx: PythonParser.ImportFromAsNamesContext
+    ) -> list[PyImportFromAsName]:
+        """
+        Returns:
+            as_names: The list of import names and their aliases.
+        """
+        return [
+            self.visitImportFromAsName(as_name) for as_name in ctx.importFromAsName()
+        ]
+
     # importFromAsName: NAME ('as' NAME)?;
     @_visitor_guard
-    def visitImportFromAsName(self, ctx: PythonParser.ImportFromAsNameContext):
+    def visitImportFromAsName(
+        self, ctx: PythonParser.ImportFromAsNameContext
+    ) -> PyImportFromAsName:
+        """
+        Returns:
+            as_name: The name of the import and its alias.
+        """
         name_node = ctx.NAME(0)
         name = self.visitName(name_node)
 
-        if as_name_node := ctx.NAME(1):
-            as_name = self.visitName(as_name_node)
+        if alias_node := ctx.NAME(1):
+            aliased = True
+            alias = self.visitName(alias_node)
 
             if self.pass_num == 1:
                 # TODO: The name may refer to a module or an attribute.
                 self.context.set_node_info(name_node, kind=TokenKind.VARIABLE)
         else:
-            as_name_node, as_name = name_node, name
+            aliased = False
+            alias_node, alias = name_node, name
 
         if self.pass_num == 1:
             # The as-name is defined in the current scope.
-            symbol = Symbol(SymbolType.IMPORTED, as_name, as_name_node)
+            symbol = Symbol(SymbolType.IMPORTED, alias, alias_node)
             # TODO: The name may refer to a module or an attribute.
             self.context.set_node_info(
-                as_name_node, kind=TokenKind.VARIABLE, symbol=symbol
+                alias_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
+
+        return PyImportFromAsName(name, alias if aliased else None)
 
     # dottedAsName: dottedName ('as' NAME)?;
     @_visitor_guard
     def visitDottedAsName(self, ctx: PythonParser.DottedAsNameContext):
-        if as_name_node := ctx.NAME():
-            self.visitDottedName(ctx.dottedName())
-
-            as_name = self.visitName(as_name_node)
+        if alias_node := ctx.NAME():
+            path = self.visitDottedName(ctx.dottedName())
+            alias = self.visitName(alias_node)
 
             if self.pass_num == 1:
                 # The as-name is defined in the current scope.
-                symbol = Symbol(SymbolType.IMPORTED, as_name, as_name_node)
+                symbol = Symbol(SymbolType.IMPORTED, alias, alias_node)
                 # The name always refers to a module.
                 self.context.set_node_info(
-                    as_name_node, kind=TokenKind.MODULE, symbol=symbol
+                    alias_node, kind=TokenKind.MODULE, symbol=symbol
                 )
 
-                with self.context.wrap_errors(DuplicateSymbolError):
+                with self.context.wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
 
         else:
-            self.visitDottedName(ctx.dottedName(), define=True)
+            path = self.visitDottedName(ctx.dottedName(), define=True)
+            alias = None
+
+        if self.pass_num == 1:
+            self.context.imports.append(PyImportName(path, alias))
+
+        elif self.pass_num == 2:
+            "TODO: Resolve the import."
 
     # dottedName: dottedName '.' NAME | NAME;
     @_visitor_guard
     def visitDottedName(
-        self, ctx: PythonParser.DottedNameContext, define: bool = False
-    ):
+        self, ctx: PythonParser.DottedNameContext, *, define: bool = False
+    ) -> list[str]:
         """
         Args:
             define: Whether to define the name in the current scope.
                 True if the dotted name is part of an import-name statement, and no
                 as-name is provided.
+
+        Returns:
+            path: The list of module names in the dotted name.
         """
         name_node = ctx.NAME()
         name = self.visitName(name_node)
@@ -173,16 +254,20 @@ class PythonVisitor(PythonParserVisitor):
             self.context.set_node_info(name_node, kind=TokenKind.MODULE)
 
         if dotted_name := ctx.dottedName():
-            self.visitDottedName(dotted_name)
+            path = self.visitDottedName(dotted_name, define=define)
+            path.append(name)
+            return path
 
-        elif define:
-            if self.pass_num == 1:
-                # The name is defined in the current scope.
+        else:
+            if define and self.pass_num == 1:
+                # The top-level module is defined in the current scope.
                 symbol = Symbol(SymbolType.IMPORTED, name, name_node)
                 self.context.set_node_info(name_node, symbol=symbol)
 
-                with self.context.wrap_errors(DuplicateSymbolError):
+                with self.context.wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
+
+            return [name]
 
     # classDef
     #   : decorators? 'class' NAME typeParams? ('(' arguments? ')')?
@@ -199,7 +284,7 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(SymbolType.CLASS, name, name_node)
             self.context.set_node_info(name_node, kind=TokenKind.CLASS, symbol=symbol)
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         if arguments := ctx.arguments():
@@ -232,7 +317,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.FUNCTION, symbol=symbol
             )
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         if expression := ctx.expression():
@@ -263,7 +348,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         if annotation := ctx.annotation():
@@ -282,7 +367,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         with self.context.parent_scope():
@@ -420,7 +505,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(DuplicateSymbolError):
+            with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
     # forIfClauses: forIfClause+;
@@ -432,7 +517,7 @@ class PythonVisitor(PythonParserVisitor):
     # forIfClause
     #   : 'async'? 'for' starTargets 'in' logical ('if' logical)*;
     @_visitor_guard
-    def visitForIfClause(self, ctx: PythonParser.ForIfClauseContext, level: int = 0):
+    def visitForIfClause(self, ctx: PythonParser.ForIfClauseContext, *, level: int = 0):
         """
         Args:
             level: The level of the for-if clause, starting from 0.

@@ -1,5 +1,6 @@
+import dataclasses
 from contextlib import contextmanager
-from typing import Iterator, Unpack
+from typing import Iterator, Literal, NamedTuple, Optional, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
@@ -18,6 +19,8 @@ class PythonContext:
         self.global_scope: SymbolTable = global_scope
         self.current_scope: SymbolTable = global_scope
         self.scopes: dict[ParserRuleContext, SymbolTable] = {}
+
+        self.imports: list[PyImport] = []
 
         self.token_info: dict[CommonToken, TokenInfo] = {}
 
@@ -59,3 +62,56 @@ class PythonContext:
             yield
         except error_cls as e:
             self.errors.append(e)
+
+
+@dataclasses.dataclass
+class PyImport:
+    """
+    Represents a Python import statement.
+
+    Attributes:
+        path: The list of module names in the import statement.
+    """
+
+    path: list[str]
+
+
+@dataclasses.dataclass
+class PyImportName(PyImport):
+    """
+    Represents a simple import statement.
+
+    Attributes:
+    """
+
+    alias: Optional[str] = None
+
+
+@dataclasses.dataclass
+class PyImportFrom(PyImport):
+    """
+    Represents a `from` import statement.
+
+    Attributes:
+        relative: The number of parent directories to import from.
+        targets: The list of names imported from the module, or `...` for all.
+    """
+
+    relative: Optional[int]
+    targets: "PyImportFromTargets"
+
+
+class PyImportFromAsName(NamedTuple):
+    """
+    Represents a name pair in a `from` import statement.
+
+    Attributes:
+        name: The name of the imported entity.
+        alias: The alias of the imported entity.
+    """
+
+    name: str
+    alias: Optional[str] = None
+
+
+PyImportFromTargets = list[PyImportFromAsName] | Literal["..."]
