@@ -7,6 +7,7 @@ from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
 from .scope import ScopeType, SymbolTable
+from .symbol import Symbol
 from .token import TokenInfo
 
 
@@ -82,9 +83,12 @@ class PyImportName(PyImport):
     Represents a simple import statement.
 
     Attributes:
+        alias: The alias of the imported module, or `None` if not aliased.
+        symbol: The symbol that the import resolves to.
     """
 
-    alias: Optional[str] = None
+    alias: Optional[str]
+    symbol: Symbol
 
 
 @dataclasses.dataclass
@@ -108,10 +112,12 @@ class PyImportFromAsName(NamedTuple):
     Attributes:
         name: The name of the imported entity.
         alias: The alias of the imported entity.
+        symbol: The symbol that the import resolves to.
     """
 
     name: str
-    alias: Optional[str] = None
+    alias: Optional[str]
+    symbol: Symbol
 
 
 PyImportFromTargets = list[PyImportFromAsName] | Literal["..."]

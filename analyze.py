@@ -9,7 +9,7 @@ from dominate.util import text as dom_text
 from typeshed_client import get_stub_file
 
 from grammar import PythonErrorStrategy, PythonLexer, PythonParser
-from semantics.scope import ScopeType, SymbolTable
+from semantics.scope import ScopeType, SymbolTable, SymbolType
 from semantics.structure import PythonContext
 from semantics.token import TOKEN_KIND_MAP, TokenKind
 from semantics.visitor import PythonVisitor
@@ -51,13 +51,37 @@ def load_builtins() -> SymbolTable:
     context = PythonContext(global_scope)
 
     visitor = PythonVisitor(context)
-    visitor.fullVisit(source.tree)
+    visitor.first_pass(source.tree)
+    visitor.second_pass(source.tree)
 
     builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
     for symbol in global_scope.iter_symbols(skip_imports=True, public_only=True):
         builtin_scope.define(symbol)
 
     return builtin_scope
+
+
+def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
+    if token_info := context.token_info.get(token):
+        if token_kind := token_info.get("kind"):
+            return token_kind
+
+        if symbol := token_info.get("symbol"):
+            while symbol.target is not None:
+                symbol = symbol.target
+
+            match symbol.type:
+                case SymbolType.VARIABLE | SymbolType.PARAMETER:
+                    return TokenKind.VARIABLE
+                case SymbolType.FUNCTION:
+                    return TokenKind.FUNCTION
+                case SymbolType.CLASS:
+                    return TokenKind.CLASS
+                case SymbolType.GLOBAL | SymbolType.NONLOCAL | SymbolType.IMPORTED:
+                    # Unresolved symbols.
+                    pass
+
+    return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
 
 
 def main(args):
@@ -76,7 +100,8 @@ def main(args):
     context = PythonContext(global_scope)
 
     visitor = PythonVisitor(context)
-    visitor.fullVisit(source.tree)
+    visitor.first_pass(source.tree)
+    visitor.second_pass(source.tree)
 
     doc = dominate.document(title="Python Code")
 
@@ -94,13 +119,8 @@ def main(args):
                     }:
                         continue
 
-                    token_kind = None
-                    if token_info := context.token_info.get(token):
-                        token_kind = token_info.get("kind")
-                    if token_kind is None:
-                        token_kind = TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
-
-                    if token_kind == TokenKind.NONE:
+                    token_kind = get_token_kind(context, token)
+                    if token_kind is TokenKind.NONE:
                         dom_text(token.text)
                     else:
                         dom.span(token.text, cls=f"token-{token_kind.value}")
