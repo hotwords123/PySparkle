@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Iterable, Optional
 
 from .base import SemanticError
 from .symbol import Symbol, SymbolType
@@ -67,6 +67,39 @@ class SymbolTable:
                 break
             scope = scope.parent
         return None
+
+    def iter_symbols(
+        self,
+        parents: bool = False,
+        skip_imports: bool = False,
+        public_only: bool = False,
+    ) -> Iterable[Symbol]:
+        """
+        Iterates over all symbols in the current scope and possibly its parents.
+
+        Args:
+            parents: Whether to iterate over the parent scopes.
+            skip_imports: Whether to skip imported symbols.
+            public_only: Whether to only iterate over public symbols.
+        """
+        if public_only:
+            assert (
+                not parents and self.scope_type is ScopeType.GLOBAL
+            ), "Public symbols are only defined in the global scope"
+
+        scope = self
+        while scope is not None:
+            # TODO: Respect __all__ when public_only is True
+            for name, symbol in self.symbols.items():
+                if skip_imports and symbol.type is SymbolType.IMPORTED:
+                    continue
+                if public_only and name.startswith("_"):
+                    continue
+                yield symbol
+
+            if not parents:
+                break
+            scope = scope.parent
 
 
 class DuplicateSymbolError(SemanticError):

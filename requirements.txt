@@ -4,6 +4,7 @@ black==24.10.0
 click==8.1.7
 colorama==0.4.6
 dominate==2.9.1
+importlib_resources==6.4.5
 install-jdk==1.1.0
 isort==5.13.2
 mypy-extensions==1.0.0
@@ -12,4 +13,6 @@ pathspec==0.12.1
 platformdirs==4.3.6
 PyYAML==6.0.2
 setuptools==75.1.0
+typeshed_client==2.7.0
+typing_extensions==4.12.2
 wheel==0.44.0
