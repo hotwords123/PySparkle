@@ -136,7 +136,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitDottedAsName(self, ctx: PythonParser.DottedAsNameContext):
         if as_name_node := ctx.NAME():
-            self.visitDottedName(ctx.dottedName(), renamed=True)
+            self.visitDottedName(ctx.dottedName())
 
             as_name = self.visitName(as_name_node)
 
@@ -152,13 +152,19 @@ class PythonVisitor(PythonParserVisitor):
                     self.context.current_scope.define(symbol)
 
         else:
-            self.visitDottedName(ctx.dottedName())
+            self.visitDottedName(ctx.dottedName(), define=True)
 
     # dottedName: dottedName '.' NAME | NAME;
     @_visitor_guard
     def visitDottedName(
-        self, ctx: PythonParser.DottedNameContext, renamed: bool = False
+        self, ctx: PythonParser.DottedNameContext, define: bool = False
     ):
+        """
+        Args:
+            define: Whether to define the name in the current scope.
+                True if the dotted name is part of an import-name statement, and no
+                as-name is provided.
+        """
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
@@ -169,7 +175,7 @@ class PythonVisitor(PythonParserVisitor):
         if dotted_name := ctx.dottedName():
             self.visitDottedName(dotted_name)
 
-        elif not renamed:
+        elif define:
             if self.pass_num == 1:
                 # The name is defined in the current scope.
                 symbol = Symbol(SymbolType.IMPORTED, name, name_node)
@@ -427,6 +433,10 @@ class PythonVisitor(PythonParserVisitor):
     #   : 'async'? 'for' starTargets 'in' logical ('if' logical)*;
     @_visitor_guard
     def visitForIfClause(self, ctx: PythonParser.ForIfClauseContext, level: int = 0):
+        """
+        Args:
+            level: The level of the for-if clause, starting from 0.
+        """
         self.visitStarTargets(ctx.starTargets())
 
         # The first iterable is evaluated in the enclosing scope.
