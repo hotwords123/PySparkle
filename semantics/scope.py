@@ -12,6 +12,7 @@ class ScopeType(Enum):
     GLOBAL = "global"
     LOCAL = "local"
     CLASS = "class"
+    OBJECT = "object"
     LAMBDA = "lambda"
     COMPREHENSION = "comprehension"
 
@@ -23,16 +24,16 @@ class SymbolTable:
         self.name = name
         self.scope_type = scope_type
         self.parent = parent
-        self.symbols: dict[str, Symbol] = {}
+        self._symbols: dict[str, Symbol] = {}
 
     def __contains__(self, name: str) -> bool:
-        return name in self.symbols
+        return name in self._symbols
 
     def __getitem__(self, name: str) -> Symbol:
-        return self.symbols[name]
+        return self._symbols[name]
 
     def get(self, name: str) -> Optional[Symbol]:
-        return self.symbols.get(name)
+        return self._symbols.get(name)
 
     def define(self, symbol: Symbol):
         """
@@ -42,9 +43,9 @@ class SymbolTable:
         Args:
             symbol: The symbol to define.
         """
-        if symbol.name in self.symbols:
+        if symbol.name in self._symbols:
             raise PyDuplicateSymbolError(symbol, self)
-        self.symbols[symbol.name] = symbol
+        self._symbols[symbol.name] = symbol
         # print(f"Defined symbol {symbol.name} in scope {self.name}")
 
     def lookup(
@@ -71,8 +72,8 @@ class SymbolTable:
         while scope is not None:
             if not globals and scope.scope_type is ScopeType.GLOBAL:
                 break
-            if name in scope.symbols:
-                return scope.symbols[name]
+            if name in scope._symbols:
+                return scope._symbols[name]
             if not parents:
                 break
             scope = scope.parent
@@ -80,20 +81,20 @@ class SymbolTable:
             raise PySymbolNotFoundError(name, raise_from, self)
         return None
 
-    def iter_symbols(
+    def symbols(
         self,
         parents: bool = False,
         public_only: bool = False,
     ) -> Iterable[Symbol]:
         """
-        Iterates over all symbols in the current scope and possibly its parents.
+        Returns an iterable of all symbols in the scope and possibly its parent scopes.
 
         Args:
             parents: Whether to iterate over the parent scopes.
             public_only: Whether to only iterate over public symbols.
 
-        Yields:
-            symbol: The next symbol in the scope.
+        Returns:
+            symbols: An iterable of symbols.
         """
         if public_only:
             assert (
@@ -102,7 +103,7 @@ class SymbolTable:
 
         scope = self
         while scope is not None:
-            for symbol in self.symbols.values():
+            for symbol in self._symbols.values():
                 if public_only and not symbol.public:
                     continue
                 yield symbol

@@ -87,7 +87,7 @@ class PythonVisitor(PythonParserVisitor):
 
     def _check_public_symbols(self):
         # TODO: Respect the __all__ list.
-        for symbol in self.context.global_scope.iter_symbols():
+        for symbol in self.context.global_scope.symbols():
             if symbol.name.startswith("_"):
                 symbol.public = False
             elif symbol.public is None:
