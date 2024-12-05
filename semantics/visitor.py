@@ -148,7 +148,6 @@ class PythonVisitor(PythonParserVisitor):
             self.context.set_node_info(node, kind=TokenKind.ERROR)
 
     # singleTarget ':' expression ('=' assignmentRhs)?
-    @_type_check
     @_visitor_guard
     def visitAnnotatedAssignment(self, ctx: PythonParser.AnnotatedAssignmentContext):
         annotation = self.visitExpression(ctx.expression())
@@ -156,9 +155,14 @@ class PythonVisitor(PythonParserVisitor):
         if assignment_rhs := ctx.assignmentRhs():
             self.visitAssignmentRhs(assignment_rhs)
 
-        self.visitSingleTarget(
-            ctx.singleTarget(), value_type=annotation.get_annotation_type()
-        )
+        if self.pass_num == 1:
+            self.visitSingleTarget(ctx.singleTarget(), define=True)
+
+        elif self.pass_num == 2:
+            annotation: PyType
+            self.visitSingleTarget(
+                ctx.singleTarget(), value_type=annotation.get_annotation_type()
+            )
 
     # (starTargets '=')+ assignmentRhs
     @_type_check
@@ -675,6 +679,7 @@ class PythonVisitor(PythonParserVisitor):
                     return symbol.get_type()
                 else:
                     self.context.set_node_info(name_node, kind=TokenKind.IDENTIFIER)
+                    return PyType.ANY
 
         else:
             return super().visitAtom(ctx)
@@ -683,9 +688,6 @@ class PythonVisitor(PythonParserVisitor):
     #   : 'lambda' lambdaParameters? ':' expression;
     @_visitor_guard
     def visitLambdef(self, ctx: PythonParser.LambdefContext) -> Optional[PyType]:
-        if parameters := ctx.lambdaParameters():
-            self.visitLambdaParameters(parameters)
-
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<lambda>", ScopeType.LAMBDA)
             entity = PyLambda(scope)
@@ -695,6 +697,9 @@ class PythonVisitor(PythonParserVisitor):
             entity: PyLambda = self.context.entities[ctx]
 
         with self.context.scope_guard(scope):
+            if parameters := ctx.lambdaParameters():
+                self.visitLambdaParameters(parameters)
+
             self.visitExpression(ctx.expression())
 
         if self.pass_num == 2:
@@ -958,17 +963,20 @@ class PythonVisitor(PythonParserVisitor):
         self,
         ctx: PythonParser.SingleTargetContext,
         *,
+        define: bool = False,
         value_type: Optional[PyType] = None,
     ):
         """
         Args:
+            define: Whether to define the target in the current scope.
             value_type: The type of the value assigned to the target.
         """
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
-                self.context.define_variable(name, name_node)
+                if define:
+                    self.context.define_variable(name, name_node)
 
             elif self.pass_num == 2:
                 if value_type is not None:
@@ -976,6 +984,12 @@ class PythonVisitor(PythonParserVisitor):
                     # inference is performed.
                     symbol = self.context.current_scope[name]
                     self.context.set_variable_type(symbol, value_type)
+
+                elif symbol := self.context.current_scope.lookup(name):
+                    self.context.set_node_info(name_node, symbol=symbol)
+
+                else:
+                    self.context.set_node_info(name_node, kind=TokenKind.IDENTIFIER)
 
         elif single_target := ctx.singleTarget():
             return self.visitSingleTarget(single_target, value_type=value_type)
@@ -1001,7 +1015,14 @@ class PythonVisitor(PythonParserVisitor):
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
-            self.context.define_attribute(type_, name, name_node, value_type=value_type)
+            if value_type is not None:
+                self.context.define_attribute(type_, name, name_node, value_type=value_type)
+
+            elif symbol := type_.get_attr(name):
+                self.context.set_node_info(name_node, symbol=symbol)
+
+            else:
+                self.context.set_node_info(name_node, kind=TokenKind.FIELD)
 
         elif slices := ctx.slices():
             self.visitSlices(slices)
