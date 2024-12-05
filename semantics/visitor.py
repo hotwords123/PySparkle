@@ -8,13 +8,14 @@ from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
 from .base import SemanticError
-from .entity import PyClass, PyFunction, PyLambda
+from .entity import PyClass, PyFunction, PyLambda, PyParameter
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
     PyImportFromAsName,
     PyImportFromTargets,
     PyImportName,
+    PyParameterSpec,
     PythonContext,
 )
 from .symbol import Symbol, SymbolType
@@ -456,14 +457,173 @@ class PythonVisitor(PythonParserVisitor):
 
             self.visitBlock(ctx.block())
 
+    # parameters
+    #   : slashNoDefault (',' paramNoDefault)* (',' paramWithDefault)*
+    #       (',' starEtc?)?
+    #   | slashWithDefault (',' paramWithDefault)*
+    #       (',' starEtc?)?
+    #   | paramNoDefault (',' paramNoDefault)* (',' paramWithDefault)*
+    #       (',' starEtc?)?
+    #   | paramWithDefault (',' paramWithDefault)*
+    #       (',' starEtc?)?
+    #   | starEtc;
+    @_visitor_guard
+    def visitParameters(self, ctx: PythonParser.ParametersContext) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        if node := ctx.slashNoDefault():
+            parameters.extend(self.visitSlashNoDefault(node))
+
+        elif node := ctx.slashWithDefault():
+            parameters.extend(self.visitSlashWithDefault(node))
+
+        for node in ctx.paramNoDefault():
+            parameters.append(self.visitParamNoDefault(node))
+
+        for node in ctx.paramWithDefault():
+            parameters.append(self.visitParamWithDefault(node))
+
+        if node := ctx.starEtc():
+            parameters.extend(self.visitStarEtc(node))
+
+        return parameters
+
+    # slashNoDefault: paramNoDefault (',' paramNoDefault)* ',' '/';
+    @_visitor_guard
+    def visitSlashNoDefault(
+        self, ctx: PythonParser.SlashNoDefaultContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        for node in ctx.paramNoDefault():
+            parameters.append(self.visitParamNoDefault(node))
+
+        if self.pass_num == 1:
+            for param in parameters:
+                param.spec.posonly = True
+
+        return parameters
+
+    # slashWithDefault
+    #   : paramNoDefault (',' paramNoDefault)* (',' paramWithDefault)+ ',' '/'
+    #   | paramWithDefault (',' paramWithDefault)* ',' '/';
+    @_visitor_guard
+    def visitSlashWithDefault(
+        self, ctx: PythonParser.SlashWithDefaultContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        for node in ctx.paramNoDefault():
+            parameters.append(self.visitParamNoDefault(node))
+
+        for node in ctx.paramWithDefault():
+            parameters.append(self.visitParamWithDefault(node))
+
+        if self.pass_num == 1:
+            for param in parameters:
+                param.spec.posonly = True
+
+        return parameters
+
+    # starEtc
+    #   : '*' (paramNoDefault | paramNoDefaultStarAnnotation)
+    #       (',' paramMaybeDefault)* (',' kwds?)?
+    #   | '*' (',' paramMaybeDefault)+ (',' kwds?)?
+    #   | kwds;
+    @_visitor_guard
+    def visitStarEtc(self, ctx: PythonParser.StarEtcContext) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        if node := ctx.paramNoDefault():
+            parameters.append(param := self.visitParamNoDefault(node))
+
+            if self.pass_num == 1:
+                param.spec.star = "*"
+
+        elif node := ctx.paramNoDefaultStarAnnotation():
+            parameters.append(param := self.visitParamNoDefaultStarAnnotation(node))
+
+        for node in ctx.paramMaybeDefault():
+            parameters.append(param := self.visitParamMaybeDefault(node))
+
+            if self.pass_num == 1:
+                param.spec.kwonly = True
+
+        if node := ctx.kwds():
+            parameters.append(self.visitKwds(node))
+
+        return parameters
+
+    # kwds: '**' paramNoDefault ','?;
+    def visitKwds(self, ctx: PythonParser.KwdsContext) -> PyParameter:
+        param = self.visitParamNoDefault(ctx.paramNoDefault())
+
+        if self.pass_num == 1:
+            param.spec.star = "**"
+
+        return param
+
+    # paramNoDefault: param;
+    def visitParamNoDefault(
+        self, ctx: PythonParser.ParamNoDefaultContext
+    ) -> PyParameter:
+        return self.visitParam(ctx.param())
+
+    # paramNoDefaultStarAnnotation: paramStarAnnotation;
+    def visitParamNoDefaultStarAnnotation(
+        self, ctx: PythonParser.ParamNoDefaultStarAnnotationContext
+    ) -> PyParameter:
+        return self.visitParamStarAnnotation(ctx.paramStarAnnotation())
+
+    # paramWithDefault: param default;
+    def visitParamWithDefault(
+        self, ctx: PythonParser.ParamWithDefaultContext
+    ) -> PyParameter:
+        param = self.visitParam(ctx.param())
+
+        default = self.visitDefault(default_node := ctx.default())
+
+        if self.pass_num == 1:
+            param.spec.default = default_node
+
+        elif self.pass_num == 2:
+            if param.type is None:
+                param.type = default.get_inferred_type()
+
+        return param
+
+    # paramMaybeDefault: param default?;
+    def visitParamMaybeDefault(
+        self, ctx: PythonParser.ParamMaybeDefaultContext
+    ) -> PyParameter:
+        param = self.visitParam(ctx.param())
+
+        if default_node := ctx.default():
+            default = self.visitDefault(default_node)
+
+            if self.pass_num == 1:
+                param.spec.default = default_node
+
+            elif self.pass_num == 2:
+                if param.type is None:
+                    param.type = default.get_inferred_type()
+
+        return param
+
     # param: NAME annotation?;
     @_visitor_guard
-    def visitParam(self, ctx: PythonParser.ParamContext):
+    def visitParam(self, ctx: PythonParser.ParamContext) -> PyParameter:
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
+        annotation_node = ctx.annotation()
+
         if self.pass_num == 1:
-            symbol = Symbol(SymbolType.PARAMETER, name, name_node)
+            param_spec = PyParameterSpec(annotation=annotation_node)
+            param = PyParameter(name, param_spec)
+            self.context.entities[ctx] = param
+
+            symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
             self.context.set_node_info(
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
@@ -471,18 +631,33 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
-        if annotation := ctx.annotation():
+        else:
+            param: PyParameter = self.context.entities[ctx]
+
+        if annotation_node:
             with self.context.scope_guard(self.context.parent_scope):
-                self.visitAnnotation(annotation)
+                annotation = self.visitAnnotation(annotation_node)
+
+            if self.pass_num == 2:
+                param.type = annotation
+
+        return param
 
     # paramStarAnnotation: NAME starAnnotation;
     @_visitor_guard
-    def visitParamStarAnnotation(self, ctx: PythonParser.ParamStarAnnotationContext):
+    def visitParamStarAnnotation(
+        self, ctx: PythonParser.ParamStarAnnotationContext
+    ) -> PyParameter:
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
+        annotation_node = ctx.starAnnotation()
+
         if self.pass_num == 1:
-            symbol = Symbol(SymbolType.PARAMETER, name, name_node)
+            param_spec = PyParameterSpec(star=True, star_annotation=annotation_node)
+            param = PyParameter(name, param_spec)
+
+            symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
             self.context.set_node_info(
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
@@ -490,14 +665,36 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
+        else:
+            param = self.context.entities[ctx]
+
         with self.context.scope_guard(self.context.parent_scope):
-            self.visitStarAnnotation(ctx.starAnnotation())
+            annotation = self.visitStarAnnotation(annotation_node)
+
+        if self.pass_num == 2:
+            param.type = annotation
+
+        return param
+
+    # annotation: ':' expression;
+    @_type_check
+    @_visitor_guard
+    def visitAnnotation(self, ctx: PythonParser.AnnotationContext) -> PyType:
+        annotation: PyType = self.visitExpression(ctx.expression())
+        return annotation.get_annotation_type()
+
+    # starAnnotation: ':' starExpression;
+    @_type_check
+    @_visitor_guard
+    def visitStarAnnotation(self, ctx: PythonParser.StarAnnotationContext) -> PyType:
+        annotation: PyType = self.visitStarExpression(ctx.starExpression())
+        return PyType.ANY  # TODO: star-annotated parameters
 
     # default: '=' expression;
     @_visitor_guard
-    def visitDefault(self, ctx: PythonParser.DefaultContext):
+    def visitDefault(self, ctx: PythonParser.DefaultContext) -> Optional[PyType]:
         with self.context.scope_guard(self.context.parent_scope):
-            self.visitExpression(ctx.expression())
+            return self.visitExpression(ctx.expression())
 
     # exceptBlock
     #   : 'except' (expression ('as' NAME)?)? ':' block;
