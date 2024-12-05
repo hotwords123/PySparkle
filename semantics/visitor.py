@@ -1,4 +1,3 @@
-from contextlib import nullcontext
 from typing import NamedTuple, Optional
 
 from antlr4.ParserRuleContext import ParserRuleContext
@@ -7,6 +6,7 @@ from antlr4.tree.Tree import ErrorNode, TerminalNode
 from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
+from .entity import PyClass, PyFunction
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
@@ -305,20 +305,22 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            symbol = Symbol(SymbolType.CLASS, name, name_node)
+            scope = self.context.new_scope(ctx, f"<class '{name}'>", ScopeType.CLASS)
+            entity = PyClass(name, scope)
+
+            symbol = Symbol(SymbolType.CLASS, name, name_node, entity=entity)
             self.context.set_node_info(name_node, kind=TokenKind.CLASS, symbol=symbol)
 
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
+        else:
+            scope = self.context.scope_of(ctx)
+
         if arguments := ctx.arguments():
             self.visitArguments(arguments)
 
-        with (
-            self.context.new_scope(ctx, f"<class '{name}'>", ScopeType.CLASS)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        with self.context.scope_guard(scope):
             if type_params := ctx.typeParams():
                 self.visitTypeParams(type_params)
 
@@ -336,7 +338,10 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            symbol = Symbol(SymbolType.FUNCTION, name, name_node)
+            scope = self.context.new_scope(ctx, f"<function '{name}'>", ScopeType.LOCAL)
+            entity = PyFunction(name, scope)
+
+            symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)
             self.context.set_node_info(
                 name_node, kind=TokenKind.FUNCTION, symbol=symbol
             )
@@ -344,14 +349,13 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
+        else:
+            scope = self.context.scope_of(ctx)
+
         if expression := ctx.expression():
             self.visitExpression(expression)
 
-        with (
-            self.context.new_scope(ctx, f"<function '{name}'>", ScopeType.LOCAL)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        with self.context.scope_guard(scope):
             if type_params := ctx.typeParams():
                 self.visitTypeParams(type_params)
 
@@ -376,7 +380,7 @@ class PythonVisitor(PythonParserVisitor):
                 self.context.current_scope.define(symbol)
 
         if annotation := ctx.annotation():
-            with self.context.parent_scope():
+            with self.context.scope_guard(self.context.parent_scope):
                 self.visitAnnotation(annotation)
 
     # paramStarAnnotation: NAME starAnnotation;
@@ -394,13 +398,13 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
-        with self.context.parent_scope():
+        with self.context.scope_guard(self.context.parent_scope):
             self.visitStarAnnotation(ctx.starAnnotation())
 
     # default: '=' expression;
     @_visitor_guard
     def visitDefault(self, ctx: PythonParser.DefaultContext):
-        with self.context.parent_scope():
+        with self.context.scope_guard(self.context.parent_scope):
             self.visitExpression(ctx.expression())
 
     # exceptBlock
@@ -504,11 +508,12 @@ class PythonVisitor(PythonParserVisitor):
         if parameters := ctx.lambdaParameters():
             self.visitLambdaParameters(parameters)
 
-        with (
-            self.context.new_scope(ctx, "<lambda>", ScopeType.LAMBDA)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        if self.pass_num == 1:
+            scope = self.context.new_scope(ctx, "<lambda>", ScopeType.LAMBDA)
+        else:
+            scope = self.context.scope_of(ctx)
+
+        with self.context.scope_guard(scope):
             self.visitExpression(ctx.expression())
 
     # lambdaParam: NAME;
@@ -544,7 +549,8 @@ class PythonVisitor(PythonParserVisitor):
 
         # The first iterable is evaluated in the enclosing scope.
         # The remaining iterables are evaluated in the current scope.
-        with self.context.parent_scope() if level == 0 else nullcontext():
+        scope = self.context.parent_scope if level == 0 else self.context.current_scope
+        with self.context.scope_guard(scope):
             self.visitLogical(ctx.logical(0))
 
         # The if-clauses are evaluated in the current scope.
@@ -554,44 +560,48 @@ class PythonVisitor(PythonParserVisitor):
     # listcomp: '[' namedExpression forIfClauses ']';
     @_visitor_guard
     def visitListcomp(self, ctx: PythonParser.ListcompContext):
-        with (
-            self.context.new_scope(ctx, "<listcomp>", ScopeType.COMPREHENSION)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        if self.pass_num == 1:
+            scope = self.context.new_scope(ctx, "<listcomp>", ScopeType.COMPREHENSION)
+        else:
+            scope = self.context.scope_of(ctx)
+
+        with self.context.scope_guard(scope):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
     # setcomp: '{' namedExpression forIfClauses '}';
     @_visitor_guard
     def visitSetcomp(self, ctx: PythonParser.SetcompContext):
-        with (
-            self.context.new_scope(ctx, "<setcomp>", ScopeType.COMPREHENSION)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        if self.pass_num == 1:
+            scope = self.context.new_scope(ctx, "<setcomp>", ScopeType.COMPREHENSION)
+        else:
+            scope = self.context.scope_of(ctx)
+
+        with self.context.scope_guard(scope):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
     # genexp: '(' namedExpression forIfClauses ')';
     @_visitor_guard
     def visitGenexp(self, ctx: PythonParser.GenexpContext):
-        with (
-            self.context.new_scope(ctx, "<genexp>", ScopeType.COMPREHENSION)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        if self.pass_num == 1:
+            scope = self.context.new_scope(ctx, "<genexp>", ScopeType.COMPREHENSION)
+        else:
+            scope = self.context.scope_of(ctx)
+
+        with self.context.scope_guard(scope):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
     # dictcomp: '{' kvpair forIfClauses '}';
     @_visitor_guard
     def visitDictcomp(self, ctx: PythonParser.DictcompContext):
-        with (
-            self.context.new_scope(ctx, "<dictcomp>", ScopeType.COMPREHENSION)
-            if self.pass_num == 1
-            else self.context.scope_of(ctx)
-        ):
+        if self.pass_num == 1:
+            scope = self.context.new_scope(ctx, "<dictcomp>", ScopeType.COMPREHENSION)
+        else:
+            scope = self.context.scope_of(ctx)
+
+        with self.context.scope_guard(scope):
             self.visitKvpair(ctx.kvpair())
             self.visitForIfClauses(ctx.forIfClauses())
 

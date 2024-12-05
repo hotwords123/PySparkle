@@ -1,10 +1,13 @@
 from abc import ABC
-from typing import TYPE_CHECKING, Optional
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+
+from .scope import SymbolTable
 
 if TYPE_CHECKING:
-    from .structure import PythonContext
     from core.source import PythonSource
+
+    from .structure import PythonContext
 
 
 class PyEntity(ABC):
@@ -50,3 +53,23 @@ class PyPackage(PyModule):
     def __init__(self, name: str, path: Optional[Path], import_paths: list[Path]):
         super().__init__(name, path)
         self.import_paths = import_paths
+
+
+class PyClass(PyEntity):
+    def __init__(self, name: str, scope: "SymbolTable"):
+        super().__init__(name)
+        self.scope = scope
+
+
+class PyFunction(PyEntity):
+    def __init__(self, name: str, scope: "SymbolTable"):
+        super().__init__(name)
+        self.scope = scope
+
+
+class PyVariable(PyEntity):
+    pass
+
+
+class PyParameter(PyVariable):
+    pass

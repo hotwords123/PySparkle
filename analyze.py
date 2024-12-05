@@ -11,8 +11,8 @@ from typeshed_client import get_search_context
 from core.analysis import PythonAnalyzer
 from grammar import PythonParser
 from semantics.entity import PyModule
-from semantics.scope import SymbolType
 from semantics.structure import PythonContext
+from semantics.symbol import SymbolType
 from semantics.token import TOKEN_KIND_MAP, TokenKind
 
 

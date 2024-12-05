@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode

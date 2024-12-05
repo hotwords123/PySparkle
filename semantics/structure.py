@@ -36,22 +36,25 @@ class PythonContext:
         finally:
             self.current_scope = old_scope
 
-    def new_scope(self, ctx: ParserRuleContext, name: str, scope_type: ScopeType):
+    def new_scope(
+        self, ctx: ParserRuleContext, name: str, scope_type: ScopeType
+    ) -> SymbolTable:
         parent_scope = self.current_scope
         if parent_scope.scope_type is ScopeType.CLASS:
             parent_scope = parent_scope.parent
 
         scope = SymbolTable(name, scope_type, parent_scope)
         self.scopes[ctx] = scope
-        return self.scope_guard(scope)
+        return scope
 
-    def scope_of(self, ctx: ParserRuleContext):
+    def scope_of(self, ctx: ParserRuleContext) -> SymbolTable:
         assert (scope := self.scopes[ctx]) is not None
-        return self.scope_guard(scope)
+        return scope
 
-    def parent_scope(self):
+    @property
+    def parent_scope(self) -> SymbolTable:
         assert (scope := self.current_scope.parent) is not None
-        return self.scope_guard(scope)
+        return scope
 
     def set_node_info(self, node: TerminalNode, /, **kwargs: Unpack[TokenInfo]):
         token = node.getSymbol()

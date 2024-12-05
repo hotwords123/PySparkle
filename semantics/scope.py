@@ -4,7 +4,7 @@ from typing import Iterable, Optional
 from antlr4.Token import CommonToken
 
 from .base import SemanticError
-from .symbol import Symbol, SymbolType
+from .symbol import Symbol
 
 
 class ScopeType(Enum):
