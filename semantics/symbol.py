@@ -47,3 +47,12 @@ class Symbol:
         Returns whether the symbol is an outer symbol (global or nonlocal).
         """
         return self.type in (SymbolType.GLOBAL, SymbolType.NONLOCAL)
+
+    def resolve(self) -> "Symbol":
+        """
+        Resolves the symbol to its target.
+        """
+        symbol = self
+        while symbol.target is not None:
+            symbol = symbol.target
+        return symbol

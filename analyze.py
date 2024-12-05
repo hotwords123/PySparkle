@@ -22,8 +22,7 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
             return token_kind
 
         if symbol := token_info.get("symbol"):
-            while symbol.target is not None:
-                symbol = symbol.target
+            symbol = symbol.resolve()
 
             match symbol.type:
                 case SymbolType.VARIABLE | SymbolType.PARAMETER:
