@@ -1,14 +1,18 @@
 import dataclasses
 from contextlib import contextmanager
-from typing import Iterator, NamedTuple, Optional, Unpack
+from typing import Iterator, Literal, NamedTuple, Optional, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
+from grammar import PythonParser
+
+from .entity import PyVariable
 from .scope import ScopeType, SymbolTable
-from .symbol import Symbol
+from .symbol import Symbol, SymbolType
 from .token import TokenInfo
+from .types import PyType
 
 
 class PythonContext:
@@ -66,6 +70,61 @@ class PythonContext:
             yield
         except error_cls as e:
             self.errors.append(e)
+
+    def define_variable(
+        self,
+        name: str,
+        node: TerminalNode,
+        *,
+        type: Optional[PyType] = None,
+        scope: Optional[SymbolTable] = None,
+    ) -> Symbol:
+        """
+        Defines a variable in the current scope.
+
+        Args:
+            name: The name of the variable.
+            node: The terminal node where the variable is defined.
+            type: The type of the variable (optional).
+            scope: The scope to define the variable in (defaults to the current scope).
+
+        Returns:
+            symbol: The symbol representing the variable.
+        """
+        if scope is None:
+            scope = self.current_scope
+
+        if name not in scope:
+            entity = PyVariable(name, type=type)
+            symbol = Symbol(SymbolType.VARIABLE, name, node, entity=entity)
+            scope.define(symbol)
+        else:
+            symbol = scope[name]
+
+        self.set_node_info(node, symbol=symbol)
+        return symbol
+
+    def set_variable_type(
+        self, symbol: Symbol, type: PyType, override: bool = False
+    ) -> PyType:
+        """
+        Sets the type of the variable represented by a symbol.
+
+        Args:
+            symbol: The symbol representing the variable.
+            type: The type of the variable.
+            override: Whether to override the existing type.
+
+        Returns:
+            type: The type of the variable.
+        """
+        if isinstance(entity := symbol.resolve_entity(), PyVariable):
+            if override or entity.type is None:
+                entity.type = type
+            else:
+                type = entity.type
+
+        return type
 
 
 @dataclasses.dataclass
@@ -132,3 +191,24 @@ class PyImportFromAsName(NamedTuple):
     name: str
     alias: Optional[str]
     symbol: Symbol
+
+
+@dataclasses.dataclass
+class PyParameterSpec:
+    """
+    Represents a parameter specification.
+
+    Attributes:
+        posonly: Whether the parameter is positional-only.
+        kwonly: Whether the parameter is keyword-only.
+        star: Whether the parameter is a star or double-star parameter.
+        annotation: The type annotation of the parameter.
+        default: The default value of the parameter.
+    """
+
+    posonly: bool = False
+    kwonly: bool = False
+    star: Optional[Literal["*", "**"]] = None
+    annotation: Optional[PythonParser.AnnotationContext] = None
+    star_annotation: Optional[PythonParser.StarAnnotationContext] = None
+    default: Optional[PythonParser.DefaultContext] = None

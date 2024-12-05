@@ -1,12 +1,14 @@
+from ast import literal_eval
 from typing import NamedTuple, Optional
 
 from antlr4.ParserRuleContext import ParserRuleContext
-from antlr4.tree.Tree import ErrorNode, TerminalNode
+from antlr4.tree.Tree import ErrorNode, ParseTree, TerminalNode
 
 from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
-from .entity import PyClass, PyFunction
+from .base import SemanticError
+from .entity import PyClass, PyFunction, PyVariable
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
@@ -17,6 +19,7 @@ from .structure import (
 )
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
+from .types import PyClassType, PyInstanceType, PyLiteralType, PyType
 
 
 def _visitor_guard(func):
@@ -29,9 +32,18 @@ def _visitor_guard(func):
 
 
 def _first_pass_only(func):
-    def wrapper(self: "PythonVisitor", ctx: ParserRuleContext, **kwargs):
+    def wrapper(self: "PythonVisitor", node: ParseTree, **kwargs):
         if self.pass_num == 1:
-            return func(self, ctx, **kwargs)
+            return func(self, node, **kwargs)
+
+    return wrapper
+
+
+def _type_check(func):
+    def wrapper(self: "PythonVisitor", node: ParseTree, **kwargs):
+        if self.pass_num == 2:
+            return func(self, node, **kwargs) or PyType.ANY
+        return self.visitChildren(node)
 
     return wrapper
 
@@ -93,10 +105,29 @@ class PythonVisitor(PythonParserVisitor):
             elif symbol.public is None:
                 symbol.public = symbol.type is not SymbolType.IMPORTED
 
+    def aggregateResult(self, aggregate, nextResult):
+        return aggregate or nextResult
+
     def visitTerminal(self, node: TerminalNode):
         match node.getSymbol().type:
             case PythonParser.NAME:
                 return self.visitName(node)
+
+            case (
+                PythonParser.NONE
+                | PythonParser.FALSE
+                | PythonParser.TRUE
+                | PythonParser.ELLIPSIS
+                | PythonParser.STRING_LITERAL
+                | PythonParser.BYTES_LITERAL
+                | PythonParser.INTEGER
+                | PythonParser.FLOAT_NUMBER
+                | PythonParser.IMAG_NUMBER
+            ):
+                return self.visitLiteral(node)
+
+            case _:
+                return super().visitTerminal(node)
 
     def visitName(self, node: TerminalNode) -> str:
         """
@@ -104,6 +135,13 @@ class PythonVisitor(PythonParserVisitor):
             name: The name of the node.
         """
         return node.getText()
+
+    @_type_check
+    def visitLiteral(self, node: TerminalNode) -> PyType:
+        try:
+            return PyLiteralType(literal_eval(node.getText()))
+        except ValueError:
+            return PyType.ANY
 
     def visitErrorNode(self, node: ErrorNode):
         if self.pass_num == 1:
@@ -412,21 +450,22 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitExceptBlock(self, ctx: PythonParser.ExceptBlockContext):
         if expression := ctx.expression():
-            self.visitExpression(expression)
+            type_ = self.visitExpression(expression)
+        else:
+            type_ = PyType.ANY
 
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
-                if name not in self.context.current_scope:
-                    symbol = Symbol(SymbolType.VARIABLE, name, name_node)
-                    self.context.current_scope.define(symbol)
-                else:
-                    symbol = self.context.current_scope[name]
+                self.context.define_variable(name, name_node)
 
-                self.context.set_node_info(
-                    name_node, kind=TokenKind.VARIABLE, symbol=symbol
-                )
+            elif self.pass_num == 2:
+                symbol = self.context.current_scope[name]
+                if isinstance(type_, PyClassType):
+                    self.context.set_variable_type(
+                        symbol, type_.cls.get_instance_type()
+                    )
 
         self.visitBlock(ctx.block())
 
@@ -440,25 +479,21 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
-                if name not in self.context.current_scope:
-                    symbol = Symbol(SymbolType.VARIABLE, name, name_node)
-                    self.context.current_scope.define(symbol)
-                else:
-                    symbol = self.context.current_scope[name]
-
-                self.context.set_node_info(
-                    name_node, kind=TokenKind.VARIABLE, symbol=symbol
-                )
+                self.context.define_variable(name, name_node)
 
         self.visitBlock(ctx.block())
 
+    # TODO: expressions
+
     # assignmentExpression: NAME ':=' expression;
     @_visitor_guard
-    def visitAssignmentExpression(self, ctx: PythonParser.AssignmentExpressionContext):
+    def visitAssignmentExpression(
+        self, ctx: PythonParser.AssignmentExpressionContext
+    ) -> Optional[PyType]:
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
-        self.visitExpression(ctx.expression())
+        type_ = self.visitExpression(ctx.expression())
 
         # According to PEP 572, an assignment expression occurring in comprehensions
         # binds the target in the containing scope, honoring a global or nonlocal
@@ -468,13 +503,100 @@ class PythonVisitor(PythonParserVisitor):
             assert (scope := scope.parent) is not None
 
         if self.pass_num == 1:
-            if name not in scope:
-                symbol = Symbol(SymbolType.VARIABLE, name, name_node)
-                scope.define(symbol)
-            else:
-                symbol = scope[name]
+            self.context.define_variable(name, name_node, scope=scope)
 
-            self.context.set_node_info(name_node, symbol=symbol)
+        elif self.pass_num == 2:
+            symbol = scope[name]
+            return self.context.set_variable_type(symbol, type_)
+
+    # logical
+    #   : 'not' logical
+    #   | logical 'and' logical
+    #   | logical 'or' logical
+    #   | comparison;
+    @_type_check
+    @_visitor_guard
+    def visitLogical(self, ctx: PythonParser.LogicalContext) -> PyType:
+        if ctx.NOT():
+            self.visitLogical(ctx.logical())
+
+            return PyInstanceType.from_builtin("bool")
+
+        elif ctx.AND() or ctx.OR():
+            left_type = self.visitLogical(ctx.logical(0))
+            right_type = self.visitLogical(ctx.logical(1))
+
+            return PyType.ANY  # TODO
+
+        else:
+            return self.visitComparison(ctx.comparison())
+
+    # comparison: bitwise compareOpBitwisePair*;
+    @_type_check
+    @_visitor_guard
+    def visitComparison(self, ctx: PythonParser.ComparisonContext) -> PyType:
+        self.visitBitwise(ctx.bitwise())
+
+        for pair in ctx.compareOpBitwisePair():
+            self.visitCompareOpBitwisePair(pair)
+
+        return PyInstanceType.from_builtin("bool")
+
+    # TODO: bitwise, arithmetic
+
+    # awaitPrimary: 'await' primary | primary;
+    @_type_check
+    @_visitor_guard
+    def visitAwaitPrimary(self, ctx: PythonParser.AwaitPrimaryContext) -> PyType:
+        type_ = self.visitPrimary(ctx.primary())
+
+        if ctx.AWAIT():
+            return type_.get_awaited_type()
+        else:
+            return type_
+
+    # primary
+    #   : primary '.' NAME
+    #   | primary genexp
+    #   | primary '(' arguments? ')'
+    #   | primary '[' slices ']'
+    #   | atom;
+    @_type_check
+    @_visitor_guard
+    def visitPrimary(self, ctx: PythonParser.PrimaryContext) -> PyType:
+        if atom := ctx.atom():
+            return self.visitAtom(atom)
+
+        type_ = self.visitPrimary(ctx.primary())
+
+        if name_node := ctx.NAME():
+            # Attribute access
+            name = self.visitName(name_node)
+
+            if symbol := type_.get_attr(name):
+                self.context.set_node_info(name_node, symbol=symbol)
+                return symbol.get_type()
+            else:
+                self.context.set_node_info(name_node, kind=TokenKind.FIELD)
+                return PyType.ANY
+
+        elif genexp := ctx.genexp():
+            # Function call with generator expression
+            self.visitGenexp(genexp)
+
+            return type_.get_return_type()
+
+        elif arguments := ctx.arguments():
+            # Function call
+            self.visitArguments(arguments)
+
+            return type_.get_return_type()
+
+        elif slices := ctx.slices():
+            # Subscription
+            self.visitSlices(slices)
+
+            return type_.get_subscripted_type()
 
     # atom
     #   : NAME
@@ -488,13 +610,14 @@ class PythonVisitor(PythonParserVisitor):
     #   | (dict | set | dictcomp | setcomp)
     #   | '...';
     @_visitor_guard
-    def visitAtom(self, ctx: PythonParser.AtomContext):
+    def visitAtom(self, ctx: PythonParser.AtomContext) -> Optional[PyType]:
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
             if self.pass_num == 2:
                 if symbol := self.context.current_scope.lookup(name):
                     self.context.set_node_info(name_node, symbol=symbol)
+                    return symbol.get_type()
                 else:
                     self.context.set_node_info(name_node, kind=TokenKind.IDENTIFIER)
 
@@ -531,6 +654,76 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
+    # string: STRING_LITERAL | BYTES_LITERAL;
+    # strings: string+;
+    @_type_check
+    @_visitor_guard
+    def visitStrings(self, ctx: PythonParser.StringsContext) -> PyType:
+        result: Optional[str | bytes] = None
+
+        for string in ctx.string():
+            type_ = self.visitString(string)
+            if not isinstance(type_, PyLiteralType):
+                return PyType.ANY
+
+            if result is None:
+                result = type_.value
+            elif type(result) is type(type_.value):
+                result += type_.value
+            else:
+                token = string.STRING_LITERAL() or string.BYTES_LITERAL()
+                self.context.errors.append(
+                    SemanticError("cannot mix bytes and nonbytes literals", token)
+                )
+                return PyType.ANY
+
+        if result is None:
+            return PyType.ANY
+
+        return PyLiteralType(result)
+
+    # list: '[' starNamedExpressions? ']';
+    @_type_check
+    @_visitor_guard
+    def visitList(self, ctx: PythonParser.ListContext) -> PyType:
+        if expressions := ctx.starNamedExpressions():
+            self.visitStarNamedExpressions(expressions)
+
+        # TODO: literals
+        return PyInstanceType.from_builtin("list")
+
+    # tuple: '(' (starNamedExpression ',' starNamedExpressions?)? ')';
+    @_type_check
+    @_visitor_guard
+    def visitTuple(self, ctx: PythonParser.TupleContext) -> PyType:
+        if expression := ctx.starNamedExpression():
+            self.visitStarNamedExpression(expression)
+
+        if expressions := ctx.starNamedExpressions():
+            self.visitStarNamedExpressions(expressions)
+
+        # TODO: literals
+        return PyInstanceType.from_builtin("tuple")
+
+    # set: '{' starNamedExpressions '}';
+    @_type_check
+    @_visitor_guard
+    def visitSet(self, ctx: PythonParser.SetContext) -> PyType:
+        self.visitStarNamedExpressions(ctx.starNamedExpressions())
+
+        # TODO: literals
+        return PyInstanceType.from_builtin("set")
+
+    # dict: '{' doubleStarredKvpairs? '}';
+    @_type_check
+    @_visitor_guard
+    def visitDict(self, ctx: PythonParser.DictContext) -> PyType:
+        if kvpairs := ctx.doubleStarredKvpairs():
+            self.visitDoubleStarredKvpairs(kvpairs)
+
+        # TODO: literals
+        return PyInstanceType.from_builtin("dict")
+
     # forIfClauses: forIfClause+;
     @_visitor_guard
     def visitForIfClauses(self, ctx: PythonParser.ForIfClausesContext):
@@ -559,7 +752,7 @@ class PythonVisitor(PythonParserVisitor):
 
     # listcomp: '[' namedExpression forIfClauses ']';
     @_visitor_guard
-    def visitListcomp(self, ctx: PythonParser.ListcompContext):
+    def visitListcomp(self, ctx: PythonParser.ListcompContext) -> Optional[PyType]:
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<listcomp>", ScopeType.COMPREHENSION)
         else:
@@ -569,9 +762,12 @@ class PythonVisitor(PythonParserVisitor):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
+        if self.pass_num == 2:
+            return PyInstanceType.from_builtin("list")
+
     # setcomp: '{' namedExpression forIfClauses '}';
     @_visitor_guard
-    def visitSetcomp(self, ctx: PythonParser.SetcompContext):
+    def visitSetcomp(self, ctx: PythonParser.SetcompContext) -> Optional[PyType]:
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<setcomp>", ScopeType.COMPREHENSION)
         else:
@@ -581,9 +777,12 @@ class PythonVisitor(PythonParserVisitor):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
+        if self.pass_num == 2:
+            return PyInstanceType.from_builtin("set")
+
     # genexp: '(' namedExpression forIfClauses ')';
     @_visitor_guard
-    def visitGenexp(self, ctx: PythonParser.GenexpContext):
+    def visitGenexp(self, ctx: PythonParser.GenexpContext) -> Optional[PyType]:
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<genexp>", ScopeType.COMPREHENSION)
         else:
@@ -593,9 +792,12 @@ class PythonVisitor(PythonParserVisitor):
             self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
+        if self.pass_num == 2:
+            return PyInstanceType.from_builtin("types.GeneratorType")
+
     # dictcomp: '{' kvpair forIfClauses '}';
     @_visitor_guard
-    def visitDictcomp(self, ctx: PythonParser.DictcompContext):
+    def visitDictcomp(self, ctx: PythonParser.DictcompContext) -> Optional[PyType]:
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<dictcomp>", ScopeType.COMPREHENSION)
         else:
@@ -604,6 +806,9 @@ class PythonVisitor(PythonParserVisitor):
         with self.context.scope_guard(scope):
             self.visitKvpair(ctx.kvpair())
             self.visitForIfClauses(ctx.forIfClauses())
+
+        if self.pass_num == 2:
+            return PyInstanceType.from_builtin("dict")
 
     # starAtom
     #   : NAME
@@ -616,13 +821,10 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
-                if name not in self.context.current_scope:
-                    symbol = Symbol(SymbolType.VARIABLE, name, name_node)
-                    self.context.current_scope.define(symbol)
-                else:
-                    symbol = self.context.current_scope[name]
+                self.context.define_variable(name, name_node)
 
-                self.context.set_node_info(name_node, symbol=symbol)
+            else:
+                "TODO: set the variable type"
 
         else:
             return super().visitStarAtom(ctx)
@@ -637,13 +839,10 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
-                if name not in self.context.current_scope:
-                    symbol = Symbol(SymbolType.VARIABLE, name, name_node)
-                    self.context.current_scope.define(symbol)
-                else:
-                    symbol = self.context.current_scope[name]
+                self.context.define_variable(name, name_node)
 
-                self.context.set_node_info(name_node, symbol=symbol)
+            else:
+                "TODO: set the variable type"
 
         else:
             return super().visitSingleTarget(ctx)

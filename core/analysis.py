@@ -6,6 +6,7 @@ from semantics.entity import PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
+from semantics.types import set_type_context
 from semantics.visitor import PythonVisitor
 
 from .modules import ModuleManager, PyImportError
@@ -15,6 +16,7 @@ from .source import PythonSource
 class PythonAnalyzer:
     def __init__(self, search_paths: list[Path]):
         self.builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
+        self.types_scope: Optional[SymbolTable] = None
         self.importer = ModuleManager(search_paths, self.load_module)
         self.builtins_loaded = False
         self.pending_second_pass: list[PyModule] = []
@@ -37,7 +39,8 @@ class PythonAnalyzer:
             self.load_imports(module)
 
             if self.builtins_loaded:
-                visitor.second_pass(module.source.tree)
+                with self.set_type_context():
+                    visitor.second_pass(module.source.tree)
             else:
                 self.pending_second_pass.append(module)
 
@@ -148,7 +151,19 @@ class PythonAnalyzer:
             for name, _, symbol in stmt.targets.as_names:
                 if target_symbol := imported_scope.get(name):
                     # If the imported module has an attribute by the name, import it.
-                    symbol.target = target_symbol
+                    if symbol is not target_symbol:
+                        symbol.target = target_symbol
+
+                    # Special case: importing from self.
+                    if (
+                        imported_module.name == base_name
+                        and target_symbol.type is SymbolType.IMPORTED
+                        and target_symbol.resolve_entity() is None
+                    ):
+                        with context.wrap_errors(PyImportError):
+                            symbol.entity = self.importer.import_module(
+                                f"{base_name}.{name}"
+                            )
 
                 elif self.import_and_define_module(imported_module, name):
                     # Otherwise, attempt to import a submodule with the name.
@@ -190,21 +205,38 @@ class PythonAnalyzer:
 
         return submodule
 
-    def load_builtins(self):
+    def load_builtins(self, load_types: bool = True):
         """
         Loads the built-in symbols.
+
+        Args:
+            load_types: Whether to load the built-in types.
         """
         builtins_module = self.importer.import_module("builtins")
 
-        for symbol in builtins_module.context.global_scope.symbols(
-            public_only=True
-        ):
+        for symbol in builtins_module.context.global_scope.symbols(public_only=True):
             self.builtin_scope.define(symbol)
+
+        if load_types:
+            types_module = self.importer.import_module("types")
+            self.types_scope = types_module.context.global_scope
 
         self.builtins_loaded = True
 
-        for module in self.pending_second_pass:
-            visitor = PythonVisitor(module.context)
-            visitor.second_pass(module.source.tree)
+        with self.set_type_context():
+            for module in self.pending_second_pass:
+                visitor = PythonVisitor(module.context)
+                visitor.second_pass(module.source.tree)
 
         self.pending_second_pass.clear()
+
+    def set_type_context(self):
+        """
+        Sets the context for the type analyzer.
+        """
+        return set_type_context(
+            {
+                "builtins": self.builtin_scope,
+                "types": self.types_scope,
+            }
+        )

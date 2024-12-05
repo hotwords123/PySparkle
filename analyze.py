@@ -35,7 +35,7 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
                     # Unresolved symbols.
                     pass
 
-            if entity := symbol.entity:
+            if entity := symbol.resolve_entity():
                 if isinstance(entity, PyModule):
                     return TokenKind.MODULE
 
