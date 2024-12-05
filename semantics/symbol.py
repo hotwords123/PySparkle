@@ -1,10 +1,11 @@
 from enum import Enum
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
-from .entity import Entity
+if TYPE_CHECKING:
+    from .entity import PyEntity
 
 
 class SymbolType(Enum):
@@ -26,7 +27,7 @@ class Symbol:
         *,
         public: Optional[bool] = None,
         target: Optional["Symbol"] = None,
-        entity: Optional[Entity] = None,
+        entity: Optional["PyEntity"] = None,
     ):
         self.name = name
         self.type = type_

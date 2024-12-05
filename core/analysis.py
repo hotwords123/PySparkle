@@ -2,13 +2,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from semantics.entity import ModuleEntity
+from semantics.entity import PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
 from semantics.visitor import PythonVisitor
 
-from .modules import ModuleManager, PyImportError, PyModule, PyPackage
+from .modules import ModuleManager, PyImportError
 from .source import PythonSource
 
 
@@ -98,13 +98,13 @@ class PythonAnalyzer:
         if stmt.alias is not None:
             # If an alias is provided, the symbol refers to the imported
             # module object.
-            stmt.symbol.entity = ModuleEntity(imported_module)
+            stmt.symbol.entity = imported_module
 
         else:
             # Otherwise, the symbol refers to the top-level module object,
             # and the submodules are imported as attributes.
             module = self.importer[stmt.path[0]]
-            stmt.symbol.entity = ModuleEntity(module)
+            stmt.symbol.entity = module
 
             for name in stmt.path[1:]:
                 module = self.import_and_define_module(module, name)
@@ -183,8 +183,7 @@ class PythonAnalyzer:
             module.context.errors.append(e)
             return None
 
-        entity = ModuleEntity(submodule)
-        symbol = Symbol(SymbolType.IMPORTED, name, entity=entity)
+        symbol = Symbol(SymbolType.IMPORTED, name, entity=submodule)
 
         with module.context.wrap_errors(PyDuplicateSymbolError):
             module.context.global_scope.define(symbol)

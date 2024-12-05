@@ -9,9 +9,8 @@ from dominate.util import text as dom_text
 from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
-from core.modules import PyModule
 from grammar import PythonParser
-from semantics.entity import ModuleEntity
+from semantics.entity import PyModule
 from semantics.scope import SymbolType
 from semantics.structure import PythonContext
 from semantics.token import TOKEN_KIND_MAP, TokenKind
@@ -38,7 +37,7 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
                     pass
 
             if entity := symbol.entity:
-                if isinstance(entity, ModuleEntity):
+                if isinstance(entity, PyModule):
                     return TokenKind.MODULE
 
                 return TokenKind.VARIABLE

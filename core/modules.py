@@ -1,37 +1,7 @@
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
-from semantics.structure import PythonContext
-
-from .source import PythonSource
-
-
-class PyModule:
-    """
-    A Python module.
-    """
-
-    def __init__(self, name: str, path: Optional[Path]):
-        self.name = name  # fully qualified module name
-        self.path = path  # the path to the module file
-
-        self.source: Optional[PythonSource] = None
-        self.context: Optional[PythonContext] = None
-        self.loaded = False
-
-    @property
-    def package(self) -> str:
-        return ".".join(self.name.split(".")[:-1])
-
-
-class PyPackage(PyModule):
-    """
-    A Python package.
-    """
-
-    def __init__(self, name: str, path: Optional[Path], import_paths: list[Path]):
-        super().__init__(name, path)
-        self.import_paths = import_paths
+from semantics.entity import PyModule, PyPackage
 
 
 class ModuleManager:
