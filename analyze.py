@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import Optional
 
 import dominate
 import dominate.tags as dom
@@ -44,6 +45,16 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
     return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
 
 
+def get_token_entity_type(
+    context: PythonContext, token: CommonToken
+) -> Optional[SymbolType]:
+    if token_info := context.token_info.get(token):
+        if symbol := token_info.get("symbol"):
+            return symbol.get_type()
+
+    return None
+
+
 def main(args):
     source_path = Path(args.input)
     out_file = open(args.output, "w", newline="") if args.output else sys.stdout
@@ -80,6 +91,7 @@ def main(args):
         with dom.div(cls="highlight"):
             with dom.pre():
                 for token in module.source.stream.tokens:
+                    token: CommonToken
                     if token.type in {
                         PythonParser.INDENT,
                         PythonParser.DEDENT,
@@ -91,7 +103,13 @@ def main(args):
                     if token_kind is TokenKind.NONE:
                         dom_text(token.text)
                     else:
-                        dom.span(token.text, cls=f"token-{token_kind.value}")
+                        entity_type = get_token_entity_type(module.context, token)
+                        dom.span(
+                            token.text,
+                            id=f"token-{token.tokenIndex}",
+                            cls=f"token-{token_kind.value}",
+                            title=entity_type and str(entity_type),
+                        )
 
     print(doc, file=out_file)
 

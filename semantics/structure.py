@@ -8,11 +8,11 @@ from antlr4.tree.Tree import TerminalNode
 
 from grammar import PythonParser
 
-from .entity import PyVariable
+from .entity import PyEntity, PyVariable
 from .scope import ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
-from .token import TokenInfo
-from .types import PyType
+from .token import TokenInfo, TokenKind
+from .types import PyInstanceType, PyType
 
 
 class PythonContext:
@@ -26,6 +26,8 @@ class PythonContext:
         self.scopes: dict[ParserRuleContext, SymbolTable] = {}
 
         self.imports: list[PyImport] = []
+
+        self.entities: dict[ParserRuleContext, PyEntity] = {}
 
         self.token_info: dict[CommonToken, TokenInfo] = {}
 
@@ -125,6 +127,32 @@ class PythonContext:
                 type = entity.type
 
         return type
+
+    def define_attribute(
+        self,
+        on_type: PyType,
+        name: str,
+        node: TerminalNode,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        if symbol := on_type.get_attr(name):
+            # If the attribute exists, the target is an attribute.
+            self.set_node_info(node, symbol=symbol)
+            if value_type is not None:
+                self.set_variable_type(symbol, value_type)
+
+        elif isinstance(on_type, PyInstanceType):
+            # If the attribute does not exist, but the primary is an instance,
+            # then a new attribute is introduced.
+            # TODO: Restrict this to happen only in class definitions.
+            self.define_variable(
+                name, node, type=value_type, scope=on_type.cls.instance_scope
+            )
+
+        else:
+            # The attribute cannot be defined on the type.
+            self.set_node_info(node, kind=TokenKind.FIELD)
 
 
 @dataclasses.dataclass

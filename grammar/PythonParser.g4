@@ -551,7 +551,7 @@ starTargets
     : starTarget (',' starTarget)* ','?;
 
 starTarget
-    : STAR? targetWithStarAtom;
+    : '*'? targetWithStarAtom;
 
 targetWithStarAtom
     : primary '.' NAME

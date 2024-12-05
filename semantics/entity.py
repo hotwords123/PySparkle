@@ -44,6 +44,12 @@ class PyModule(PyEntity):
         self.context: Optional[PythonContext] = None
         self.loaded = False
 
+    def __repr__(self):
+        s = f"<{self.__class__.__name__} {self.name!r}"
+        if self.path is not None:
+            s += f" from {self.path}"
+        return s + ">"
+
     @property
     def package(self) -> str:
         return ".".join(self.name.split(".")[:-1])
@@ -67,6 +73,7 @@ class PyClass(PyEntity):
         super().__init__(name)
         self.scope = scope
         self.instance_scope = SymbolTable(f"<object '{name}'>", ScopeType.OBJECT)
+        self.decorators: list[PyType] = []
 
     def get_type(self) -> PyClassType:
         return PyClassType(self)
@@ -88,24 +95,33 @@ class PyClass(PyEntity):
 
 
 class PyFunction(PyEntity):
-    def __init__(self, name: str, scope: "SymbolTable"):
+    def __init__(self, name: str, scope: "SymbolTable", cls: Optional[PyClass] = None):
         super().__init__(name)
         self.scope = scope
+        self.cls = cls
         self.parameters: list[PyParameter] = []
         self.return_type: Optional[PyType] = None
+        self.decorators: list[PyType] = []
 
     def get_type(self) -> PyFunctionType:
         return PyFunctionType(self)
 
 
 class PyLambda(PyFunction):
-    pass
+    def __init__(self, scope: "SymbolTable"):
+        super().__init__("<lambda>", scope)
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}>"
 
 
 class PyVariable(PyEntity):
     def __init__(self, name: str, type: Optional[PyType] = None):
         super().__init__(name)
         self.type = type
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} {self.name!r} type={self.type!r}>"
 
     def get_type(self) -> PyType:
         return self.type or PyType.ANY
@@ -120,3 +136,9 @@ class PyParameter(PyVariable):
     ):
         super().__init__(name, type)
         self.spec = spec
+
+    def __repr__(self):
+        return (
+            f"<{self.__class__.__name__} {self.name!r}"
+            f" spec={self.spec!r} type={self.type!r}>"
+        )

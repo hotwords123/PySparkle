@@ -41,7 +41,10 @@ class Symbol:
         self.entity = entity
 
     def __str__(self):
-        return f"<{self.__class__.__name__}(name={self.name}, type={self.type})>"
+        return self.name
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} name={self.name} type={self.type})>"
 
     def is_outer(self) -> bool:
         """

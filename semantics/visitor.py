@@ -8,7 +8,7 @@ from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
 from .base import SemanticError
-from .entity import PyClass, PyFunction, PyVariable
+from .entity import PyClass, PyFunction, PyLambda
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
@@ -42,7 +42,7 @@ def _first_pass_only(func):
 def _type_check(func):
     def wrapper(self: "PythonVisitor", node: ParseTree, **kwargs):
         if self.pass_num == 2:
-            return func(self, node, **kwargs) or PyType.ANY
+            return func(self, node, **kwargs)
         return self.visitChildren(node)
 
     return wrapper
@@ -146,6 +146,28 @@ class PythonVisitor(PythonParserVisitor):
     def visitErrorNode(self, node: ErrorNode):
         if self.pass_num == 1:
             self.context.set_node_info(node, kind=TokenKind.ERROR)
+
+    # singleTarget ':' expression ('=' assignmentRhs)?
+    @_type_check
+    @_visitor_guard
+    def visitAnnotatedAssignment(self, ctx: PythonParser.AnnotatedAssignmentContext):
+        annotation = self.visitExpression(ctx.expression())
+
+        if assignment_rhs := ctx.assignmentRhs():
+            self.visitAssignmentRhs(assignment_rhs)
+
+        self.visitSingleTarget(
+            ctx.singleTarget(), value_type=annotation.get_annotation_type()
+        )
+
+    # (starTargets '=')+ assignmentRhs
+    @_type_check
+    @_visitor_guard
+    def visitStarredAssignment(self, ctx: PythonParser.StarredAssignmentContext):
+        type_ = self.visitAssignmentRhs(ctx.assignmentRhs())
+
+        for star_targets in ctx.starTargets():
+            self.visitStarTargets(star_targets, value_type=type_)
 
     # globalStmt: 'global' NAME (',' NAME)*;
     @_first_pass_only
@@ -331,13 +353,21 @@ class PythonVisitor(PythonParserVisitor):
 
             return [name], symbol
 
+    # decorators: ('@' namedExpression NEWLINE)+;
+    @_type_check
+    @_visitor_guard
+    def visitDecorators(self, ctx: PythonParser.DecoratorsContext) -> list[PyType]:
+        return [self.visitNamedExpression(expr) for expr in ctx.namedExpression()]
+
     # classDef
     #   : decorators? 'class' NAME typeParams? ('(' arguments? ')')?
     #       ':' block;
     @_visitor_guard
     def visitClassDef(self, ctx: PythonParser.ClassDefContext):
         if decorators := ctx.decorators():
-            self.visitDecorators(decorators)
+            decorators = self.visitDecorators(decorators)
+        else:
+            decorators = []
 
         name_node = ctx.NAME()
         name = self.visitName(name_node)
@@ -345,6 +375,7 @@ class PythonVisitor(PythonParserVisitor):
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, f"<class '{name}'>", ScopeType.CLASS)
             entity = PyClass(name, scope)
+            self.context.entities[ctx] = entity
 
             symbol = Symbol(SymbolType.CLASS, name, name_node, entity=entity)
             self.context.set_node_info(name_node, kind=TokenKind.CLASS, symbol=symbol)
@@ -354,6 +385,9 @@ class PythonVisitor(PythonParserVisitor):
 
         else:
             scope = self.context.scope_of(ctx)
+
+            entity: PyClass = self.context.entities[ctx]
+            entity.decorators = decorators
 
         if arguments := ctx.arguments():
             self.visitArguments(arguments)
@@ -370,14 +404,27 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitFunctionDef(self, ctx: PythonParser.FunctionDefContext):
         if decorators := ctx.decorators():
-            self.visitDecorators(decorators)
+            decorators = self.visitDecorators(decorators)
+        else:
+            decorators = []
 
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, f"<function '{name}'>", ScopeType.LOCAL)
-            entity = PyFunction(name, scope)
+
+            # Find the class that the function is defined in.
+            if self.context.current_scope.scope_type is ScopeType.CLASS:
+                node = ctx.parentCtx
+                while not isinstance(node, PythonParser.ClassDefContext):
+                    node = node.parentCtx
+                cls = self.context.entities[node]
+            else:
+                cls = None
+
+            entity = PyFunction(name, scope, cls=cls)
+            self.context.entities[ctx] = entity
 
             symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)
             self.context.set_node_info(
@@ -389,6 +436,9 @@ class PythonVisitor(PythonParserVisitor):
 
         else:
             scope = self.context.scope_of(ctx)
+
+            entity: PyFunction = self.context.entities[ctx]
+            entity.decorators = decorators
 
         if expression := ctx.expression():
             self.visitExpression(expression)
@@ -507,7 +557,7 @@ class PythonVisitor(PythonParserVisitor):
 
         elif self.pass_num == 2:
             symbol = scope[name]
-            return self.context.set_variable_type(symbol, type_)
+            return self.context.set_variable_type(symbol, type_.get_inferred_type())
 
     # logical
     #   : 'not' logical
@@ -535,12 +585,17 @@ class PythonVisitor(PythonParserVisitor):
     @_type_check
     @_visitor_guard
     def visitComparison(self, ctx: PythonParser.ComparisonContext) -> PyType:
-        self.visitBitwise(ctx.bitwise())
+        type_ = self.visitBitwise(ctx.bitwise())
 
-        for pair in ctx.compareOpBitwisePair():
+        pairs = ctx.compareOpBitwisePair()
+        for pair in pairs:
             self.visitCompareOpBitwisePair(pair)
 
-        return PyInstanceType.from_builtin("bool")
+        if pairs:
+            # The result of a comparison is always a boolean.
+            return PyInstanceType.from_builtin("bool")
+        else:
+            return type_
 
     # TODO: bitwise, arithmetic
 
@@ -627,17 +682,23 @@ class PythonVisitor(PythonParserVisitor):
     # lambdef
     #   : 'lambda' lambdaParameters? ':' expression;
     @_visitor_guard
-    def visitLambdef(self, ctx: PythonParser.LambdefContext):
+    def visitLambdef(self, ctx: PythonParser.LambdefContext) -> Optional[PyType]:
         if parameters := ctx.lambdaParameters():
             self.visitLambdaParameters(parameters)
 
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, "<lambda>", ScopeType.LAMBDA)
+            entity = PyLambda(scope)
+            self.context.entities[ctx] = entity
         else:
             scope = self.context.scope_of(ctx)
+            entity: PyLambda = self.context.entities[ctx]
 
         with self.context.scope_guard(scope):
             self.visitExpression(ctx.expression())
+
+        if self.pass_num == 2:
+            return entity.get_type()
 
     # lambdaParam: NAME;
     @_visitor_guard
@@ -810,39 +871,137 @@ class PythonVisitor(PythonParserVisitor):
         if self.pass_num == 2:
             return PyInstanceType.from_builtin("dict")
 
+    # starTargets: starTarget (',' starTarget)* ','?;
+    @_type_check
+    @_visitor_guard
+    def visitStarTargets(
+        self,
+        ctx: PythonParser.StarTargetsContext,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        for star_target in ctx.starTarget():
+            # TODO: handle multiple targets
+            self.visitStarTarget(star_target, value_type=value_type)
+
+    # starTarget: '*'? targetWithStarAtom;
+    @_type_check
+    @_visitor_guard
+    def visitStarTarget(
+        self,
+        ctx: PythonParser.StarTargetContext,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        # TODO: handle the star
+        self.visitTargetWithStarAtom(ctx.targetWithStarAtom(), value_type=value_type)
+
+    # targetWithStarAtom
+    #   : primary '.' NAME
+    #   | primary '[' slices ']'
+    #   | starAtom;
+    @_type_check
+    @_visitor_guard
+    def visitTargetWithStarAtom(
+        self,
+        ctx: PythonParser.TargetWithStarAtomContext,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        if star_atom := ctx.starAtom():
+            return self.visitStarAtom(star_atom, value_type=value_type)
+
+        type_ = self.visitPrimary(ctx.primary())
+
+        if name_node := ctx.NAME():
+            name = self.visitName(name_node)
+
+            self.context.define_attribute(type_, name, name_node, value_type=value_type)
+
+        elif slices := ctx.slices():
+            self.visitSlices(slices)
+
     # starAtom
     #   : NAME
     #   | '(' starTarget ')'
     #   | '(' starTargets? ')'
     #   | '[' starTargets? ']';
     @_visitor_guard
-    def visitStarAtom(self, ctx: PythonParser.StarAtomContext):
+    def visitStarAtom(
+        self, ctx: PythonParser.StarAtomContext, *, value_type: Optional[PyType] = None
+    ):
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
                 self.context.define_variable(name, name_node)
 
-            else:
-                "TODO: set the variable type"
+            elif self.pass_num == 2:
+                if value_type is not None:
+                    symbol = self.context.current_scope[name]
+                    self.context.set_variable_type(
+                        symbol, value_type.get_inferred_type()
+                    )
 
-        else:
-            return super().visitStarAtom(ctx)
+        elif star_target := ctx.starTarget():
+            return self.visitStarTarget(star_target, value_type=value_type)
+
+        elif star_targets := ctx.starTargets():
+            return self.visitStarTargets(star_targets, value_type=value_type)
 
     # singleTarget
     #   : singleSubscriptAttributeTarget
     #   | NAME
     #   | '(' singleTarget ')';
     @_visitor_guard
-    def visitSingleTarget(self, ctx: PythonParser.SingleTargetContext):
+    def visitSingleTarget(
+        self,
+        ctx: PythonParser.SingleTargetContext,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        """
+        Args:
+            value_type: The type of the value assigned to the target.
+        """
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
             if self.pass_num == 1:
                 self.context.define_variable(name, name_node)
 
-            else:
-                "TODO: set the variable type"
+            elif self.pass_num == 2:
+                if value_type is not None:
+                    # The type always derives from a type annotation. No further
+                    # inference is performed.
+                    symbol = self.context.current_scope[name]
+                    self.context.set_variable_type(symbol, value_type)
 
-        else:
-            return super().visitSingleTarget(ctx)
+        elif single_target := ctx.singleTarget():
+            return self.visitSingleTarget(single_target, value_type=value_type)
+
+        elif target := ctx.singleSubscriptAttributeTarget():
+            return self.visitSingleSubscriptAttributeTarget(
+                target, value_type=value_type
+            )
+
+    # singleSubscriptAttributeTarget
+    #   : primary '.' NAME
+    #   | primary '[' slices ']';
+    @_type_check
+    @_visitor_guard
+    def visitSingleSubscriptAttributeTarget(
+        self,
+        ctx: PythonParser.SingleSubscriptAttributeTargetContext,
+        *,
+        value_type: Optional[PyType] = None,
+    ):
+        type_ = self.visitPrimary(ctx.primary())
+
+        if name_node := ctx.NAME():
+            name = self.visitName(name_node)
+
+            self.context.define_attribute(type_, name, name_node, value_type=value_type)
+
+        elif slices := ctx.slices():
+            self.visitSlices(slices)

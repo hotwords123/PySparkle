@@ -1,5 +1,6 @@
 import threading
 from contextlib import contextmanager
+from types import EllipsisType, NoneType
 from typing import TYPE_CHECKING, Iterable, Optional
 
 from .scope import SymbolTable
@@ -64,6 +65,12 @@ class PyType:
 
     ANY: "PyType"
 
+    def __str__(self) -> str:
+        return "Any"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}>"
+
     def get_attr(self, name: str) -> Optional[Symbol]:
         """
         Finds an attribute of the type by name.
@@ -101,6 +108,21 @@ class PyType:
         """
         return PyType.ANY
 
+    def get_annotation_type(self) -> "PyType":
+        """
+        Returns the type of the annotation.
+        """
+        return PyType.ANY
+
+    def get_inferred_type(self) -> "PyType":
+        """
+        Returns the type inferred from the type.
+
+        This is used for type inference, e.g. determining the type of a variable from
+        its initializer.
+        """
+        return self
+
 
 PyType.ANY = PyType()
 
@@ -108,6 +130,12 @@ PyType.ANY = PyType()
 class PyModuleType(PyType):
     def __init__(self, module: "PyModule"):
         self.module = module
+
+    def __str__(self) -> str:
+        return f"<module {self.module.name!r}>"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} module={self.module!r}>"
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         return self.module.context.global_scope.get(name)
@@ -119,6 +147,12 @@ class PyModuleType(PyType):
 class PyClassType(PyType):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
+
+    def __str__(self) -> str:
+        return f"type[{self.cls.name}]"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} class={self.cls!r}>"
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         # TODO: Look up in the class hierarchy.
@@ -133,8 +167,11 @@ class PyClassType(PyType):
     def get_subscripted_type(self) -> PyType:
         return self.cls.get_method_return_type("__class_getitem__")
 
-    @classmethod
-    def from_builtin(cls, name: str) -> PyType:
+    def get_annotation_type(self) -> PyType:
+        return self.cls.get_instance_type()
+
+    @staticmethod
+    def from_builtin(name: str) -> PyType:
         if cls := get_context_cls(name):
             return PyClassType(cls)
         return PyType.ANY
@@ -143,6 +180,9 @@ class PyClassType(PyType):
 class PyInstanceType(PyType):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
+
+    def __str__(self) -> str:
+        return self.cls.name
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         # TODO: Look up in the class hierarchy.
@@ -163,8 +203,8 @@ class PyInstanceType(PyType):
     def get_awaited_type(self) -> PyType:
         return self.cls.get_method_return_type("__await__")
 
-    @classmethod
-    def from_builtin(cls, name: str) -> PyType:
+    @staticmethod
+    def from_builtin(name: str) -> PyType:
         if cls := get_context_cls(name):
             return PyInstanceType(cls)
         return PyType.ANY
@@ -174,20 +214,37 @@ class PyFunctionType(PyType):
     def __init__(self, func: "PyFunction"):
         self.func = func
 
+    def __str__(self) -> str:
+        from .entity import PyLambda
+
+        if isinstance(self.func, PyLambda):
+            return "<lambda>"
+        elif self.func.cls is not None:
+            return f"<method {self.func.cls.name}.{self.func.name}>"
+        else:
+            return f"<function {self.func.name}>"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} function={self.func!r}>"
+
     def get_attr(self, name: str) -> Optional[Symbol]:
-        if function_cls := get_context_cls("function"):
+        if function_cls := get_context_cls("types.FunctionType"):
             return PyClassType(function_cls).get_attr(name)
         return None
 
     def _attrs(self) -> Iterable[Symbol]:
-        if function_cls := get_context_cls("function"):
+        if function_cls := get_context_cls("types.FunctionType"):
             yield from PyClassType(function_cls)._attrs()
 
     def get_return_type(self) -> PyType:
         return self.func.return_type or PyType.ANY
 
+    def get_inferred_type(self) -> PyType:
+        # TODO: Infer the callable type from the function.
+        return self
 
-type SimpleLiteral = bool | int | float | complex | str | bytes
+
+type SimpleLiteral = None | bool | int | float | complex | str | bytes | EllipsisType
 type CompoundLiteral = (
     SimpleLiteral
     | tuple[CompoundLiteral]
@@ -196,23 +253,40 @@ type CompoundLiteral = (
     | dict[CompoundLiteral, CompoundLiteral]
 )
 
-BUILTIN_LITERAL_TYPES: set[type] = {
+SIMPLE_LITERAL_TYPES: set[type] = {
+    NoneType,
     bool,
     int,
     float,
     complex,
     str,
     bytes,
-    tuple,
-    list,
-    set,
-    dict,
+    EllipsisType,
+}
+COMPUND_LITERAL_TYPES: set[type] = {tuple, list, set, dict}
+LITERAL_TYPES = SIMPLE_LITERAL_TYPES | COMPUND_LITERAL_TYPES
+
+LITERAL_TYPE_MAP: dict[type, str] = {
+    x: f"types.{x.__name__}" if x in (NoneType, EllipsisType) else x.__name__
+    for x in LITERAL_TYPES
 }
 
 
 class PyLiteralType(PyType):
     def __init__(self, value: CompoundLiteral):
         self.value = value
+
+    def __str__(self) -> str:
+        if self.value is None:
+            return "None"
+
+        if self.value is ...:
+            return "EllipsisType"
+
+        return f"Literal[{self.value!r}]"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} value={self.value!r}>"
 
     @property
     def value_type(self) -> type:
@@ -222,16 +296,26 @@ class PyLiteralType(PyType):
     def value_type_name(self) -> str:
         return self.value_type.__name__
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
-        if self.value is None:
-            return PyInstanceType.from_builtin("types.NoneType").get_attr(name)
+    def get_base_type(self) -> PyInstanceType:
+        """
+        Returns the base type of the literal.
+        """
+        return PyInstanceType.from_builtin(LITERAL_TYPE_MAP[self.value_type])
 
-        if self.value_type in BUILTIN_LITERAL_TYPES:
-            return PyInstanceType.from_builtin(self.value_type_name).get_attr(name)
+    def get_attr(self, name: str) -> Optional[Symbol]:
+        return self.get_base_type().get_attr(name)
 
     def _attrs(self) -> Iterable[Symbol]:
-        if self.value is None:
-            yield from PyInstanceType.from_builtin("types.NoneType")._attrs()
+        return self.get_base_type()._attrs()
 
-        if self.value_type in BUILTIN_LITERAL_TYPES:
-            yield from PyInstanceType.from_builtin(self.value_type_name)._attrs()
+    def get_annotation_type(self) -> PyType:
+        # None stands its own type in type annotations.
+        if self.value is None:
+            return PyInstanceType.from_builtin("types.NoneType")
+
+        # Other literals cannot be directly used for type annotations.
+        return PyType.ANY
+
+    def get_inferred_type(self) -> PyType:
+        # TODO: Handle compound literals.
+        return self.get_base_type()
