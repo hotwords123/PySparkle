@@ -13,7 +13,7 @@ from core.analysis import PythonAnalyzer
 from grammar import PythonParser
 from semantics.entity import PyModule
 from semantics.structure import PythonContext
-from semantics.symbol import SymbolType
+from semantics.symbol import Symbol, SymbolType
 from semantics.token import TOKEN_KIND_MAP, TokenKind
 
 
@@ -43,6 +43,14 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
                 return TokenKind.VARIABLE
 
     return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
+
+
+def get_token_target(context: PythonContext, token: CommonToken) -> Optional[Symbol]:
+    if token_info := context.token_info.get(token):
+        if symbol := token_info.get("symbol"):
+            return symbol.resolve()
+
+    return None
 
 
 def get_token_entity_type(
@@ -79,6 +87,8 @@ def main(args):
     module = PyModule(source_path.stem, source_path)
     analyzer.importer.load_module(module)
 
+    token_source = (module.source.lexer, module.source.input_stream)
+
     for error in module.context.errors:
         print(error, file=sys.stderr)
 
@@ -86,6 +96,7 @@ def main(args):
 
     with doc.head:
         dom.link(rel="stylesheet", href="style.css")
+        dom.script(src="script.js")
 
     with doc:
         with dom.div(cls="highlight"):
@@ -103,13 +114,22 @@ def main(args):
                     if token_kind is TokenKind.NONE:
                         dom_text(token.text)
                     else:
-                        entity_type = get_token_entity_type(module.context, token)
-                        dom.span(
-                            token.text,
+                        attrs = dict(
                             id=f"token-{token.tokenIndex}",
-                            cls=f"token-{token_kind.value}",
-                            title=entity_type and str(entity_type),
+                            cls=f"token token-{token_kind.value}",
                         )
+
+                        if entity_type := get_token_entity_type(module.context, token):
+                            attrs["title"] = str(entity_type)
+
+                        if (
+                            (target := get_token_target(module.context, token))
+                            and (target_token := target.token)
+                            and target_token.source == token_source
+                        ):
+                            attrs["data-target"] = f"token-{target_token.tokenIndex}"
+
+                        dom.span(token.text, **attrs)
 
     print(doc, file=out_file)
 

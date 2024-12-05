@@ -1016,7 +1016,9 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if value_type is not None:
-                self.context.define_attribute(type_, name, name_node, value_type=value_type)
+                self.context.define_attribute(
+                    type_, name, name_node, value_type=value_type
+                )
 
             elif symbol := type_.get_attr(name):
                 self.context.set_node_info(name_node, symbol=symbol)

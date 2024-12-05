@@ -3,6 +3,27 @@
   color: #d4d4d4;
 }
 
+.token {
+  transition: background-color 0.2s;
+}
+
+.token:hover {
+  background-color: #3c3c3c;
+}
+
+.token.focus {
+  background-color: #5a5a5a;
+  outline: 1px solid #569cd6;
+}
+
+.token[data-target] {
+  cursor: pointer;
+}
+
+.token[data-target]:hover {
+  text-decoration: underline;
+}
+
 .token-comment {
   color: #6A9955;
 }
@@ -24,7 +45,7 @@
 }
 
 .token-field {
-  color: #9CDCFE;
+  color: #c9ecff;
 }
 
 .token-function {
