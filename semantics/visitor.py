@@ -568,7 +568,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitLogical(self, ctx: PythonParser.LogicalContext) -> PyType:
         if ctx.NOT():
-            self.visitLogical(ctx.logical())
+            self.visitLogical(ctx.logical(0))
 
             return PyInstanceType.from_builtin("bool")
 
