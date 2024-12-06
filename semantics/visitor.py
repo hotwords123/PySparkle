@@ -544,7 +544,7 @@ class PythonVisitor(PythonParserVisitor):
 
                         elif not entity.has_modifier("staticmethod"):
                             # Instance methods have a `self` parameter.
-                            first_param.type = entity.cls.get_instance_type()
+                            first_param.type = entity.cls.get_self_type()
 
             self.visitBlock(ctx.block())
 

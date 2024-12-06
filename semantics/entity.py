@@ -8,6 +8,7 @@ from .types import (
     PyFunctionType,
     PyInstanceType,
     PyModuleType,
+    PySelfType,
     PyType,
     get_context_cls,
 )
@@ -125,18 +126,22 @@ class PyClass(_ModifiersMixin, PyEntity):
     def get_instance_type(self) -> PyInstanceType:
         return PyInstanceType(self)
 
+    def get_self_type(self) -> PySelfType:
+        return PySelfType(self)
+
     def mro_scopes(self, instance: bool = False) -> Iterable[SymbolTable]:
         """
         Yields the scopes of the class and its bases in MRO order.
 
         Args:
-            instance: Whether to yield the instance scope of the class.
+            instance: Whether to yield the instance scopes of the classes.
 
         Yields:
             scope: The scope of a class or its instance.
         """
         if instance:
-            yield self.instance_scope
+            for cls in self.mro:
+                yield cls.instance_scope
 
         for cls in self.mro:
             yield cls.scope

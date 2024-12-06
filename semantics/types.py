@@ -250,14 +250,13 @@ class PyClassType(PyType):
     def get_annotated_type(self, context: "PythonContext") -> PyType:
         return self.cls.get_instance_type()
 
-    @staticmethod
-    def from_builtin(name: str) -> PyType:
-        if cls := get_context_cls(name):
-            return PyClassType(cls)
+    @classmethod
+    def from_builtin(cls, name: str) -> PyType:
+        if entity := get_context_cls(name):
+            return cls(entity)
         return PyType.ANY
 
 
-@final
 class PyInstanceType(PyType):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
@@ -286,11 +285,23 @@ class PyInstanceType(PyType):
     def get_awaited_type(self) -> PyType:
         return self.cls.get_method_return_type("__await__")
 
-    @staticmethod
-    def from_builtin(name: str) -> PyType:
-        if cls := get_context_cls(name):
-            return PyInstanceType(cls)
+    @classmethod
+    def from_builtin(cls, name: str) -> PyType:
+        if entity := get_context_cls(name):
+            return cls(entity)
         return PyType.ANY
+
+
+@final
+class PySelfType(PyInstanceType):
+    def __init__(self, cls: "PyClass"):
+        super().__init__(cls)
+
+    def __str__(self) -> str:
+        return f"Self@{super().__str__()}"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PySelfType) and super().__eq__(other)
 
 
 @final

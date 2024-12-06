@@ -12,7 +12,7 @@ from .entity import PyEntity, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TokenInfo, TokenKind
-from .types import PyInstanceType, PyType
+from .types import PySelfType, PyType
 
 
 class PythonContext:
@@ -173,15 +173,12 @@ class PythonContext:
             if value_type is not None:
                 self.set_variable_type(symbol, value_type, override=override_type)
 
-        elif isinstance(on_type, PyInstanceType):
-            # If the attribute does not exist, but the primary is an instance,
-            # then a new attribute is introduced.
-            # TODO: Restrict this to happen only in class definitions.
+        elif isinstance(on_type, PySelfType):
+            # If the attribute does not exist, but the target is `self`, the attribute
+            # is defined on the instance scope of the class.
             self.define_variable(
                 name, node, type=value_type, scope=on_type.cls.instance_scope
             )
-
-            # TODO: handle instance attributes.
 
         else:
             # The attribute cannot be defined on the type.
