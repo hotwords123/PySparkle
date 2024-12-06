@@ -829,12 +829,7 @@ class PythonVisitor(PythonParserVisitor):
             # Attribute access
             name = self.visitName(name_node)
 
-            if symbol := type_.get_attr(name):
-                self.context.set_node_info(name_node, symbol=symbol)
-                return symbol.get_type()
-            else:
-                self.context.set_node_info(name_node, kind=TokenKind.FIELD)
-                return PyType.ANY
+            return self.context.access_attribute(type_, name, name_node)
 
         elif genexp := ctx.genexp():
             # Function call with generator expression
@@ -871,12 +866,7 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if self.pass_num == 2:
-                if symbol := self.context.current_scope.lookup(name):
-                    self.context.set_node_info(name_node, symbol=symbol)
-                    return symbol.get_type()
-                else:
-                    self.context.set_node_info(name_node, kind=TokenKind.IDENTIFIER)
-                    return PyType.ANY
+                return self.context.access_variable(name, name_node)
 
         else:
             return super().visitAtom(ctx)
@@ -1118,7 +1108,9 @@ class PythonVisitor(PythonParserVisitor):
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
 
-            self.context.define_attribute(type_, name, name_node, value_type=value_type)
+            self.context.define_attribute(
+                type_, name, name_node, value_type=value_type.get_inferred_type()
+            )
 
         elif slices := ctx.slices():
             self.visitSlices(slices)
@@ -1182,11 +1174,8 @@ class PythonVisitor(PythonParserVisitor):
                     symbol = self.context.current_scope[name]
                     self.context.set_variable_type(symbol, value_type)
 
-                elif symbol := self.context.current_scope.lookup(name):
-                    self.context.set_node_info(name_node, symbol=symbol)
-
                 else:
-                    self.context.set_node_info(name_node, kind=TokenKind.IDENTIFIER)
+                    self.context.access_variable(name, name_node)
 
         elif single_target := ctx.singleTarget():
             return self.visitSingleTarget(single_target, value_type=value_type)
@@ -1217,11 +1206,49 @@ class PythonVisitor(PythonParserVisitor):
                     type_, name, name_node, value_type=value_type
                 )
 
-            elif symbol := type_.get_attr(name):
-                self.context.set_node_info(name_node, symbol=symbol)
-
             else:
-                self.context.set_node_info(name_node, kind=TokenKind.FIELD)
+                self.context.access_attribute(type_, name, name_node)
 
         elif slices := ctx.slices():
             self.visitSlices(slices)
+
+    # delTarget
+    #   : primary '.' NAME
+    #   | primary '[' slices ']'
+    #   | delTargetAtom;
+    @_visitor_guard
+    def visitDelTarget(self, ctx: PythonParser.DelTargetContext):
+        if atom := ctx.delTargetAtom():
+            return self.visitDelTargetAtom(atom)
+
+        type_ = self.visitPrimary(ctx.primary())
+
+        if name_node := ctx.NAME():
+            name = self.visitName(name_node)
+
+            if self.pass_num == 2:
+                # TODO: handle the deletion
+                self.context.access_attribute(type_, name, name_node)
+
+        elif slices := ctx.slices():
+            self.visitSlices(slices)
+
+    # delTargetAtom
+    #   : NAME
+    #   | '(' delTarget ')'
+    #   | '(' delTargets? ')'
+    #   | '[' delTargets? ']';
+    @_visitor_guard
+    def visitDelTargetAtom(self, ctx: PythonParser.DelTargetAtomContext):
+        if name_node := ctx.NAME():
+            name = self.visitName(name_node)
+
+            if self.pass_num == 2:
+                # TODO: handle the deletion
+                self.context.access_variable(name, name_node)
+
+        elif del_target := ctx.delTarget():
+            return self.visitDelTarget(del_target)
+
+        elif del_targets := ctx.delTargets():
+            return self.visitDelTargets(del_targets)

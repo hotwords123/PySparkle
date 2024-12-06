@@ -106,6 +106,25 @@ class PythonContext:
         self.set_node_info(node, symbol=symbol)
         return symbol
 
+    def access_variable(self, name: str, node: TerminalNode) -> PyType:
+        """
+        Accesses a variable in the current scope.
+
+        Args:
+            name: The name of the variable.
+            node: The terminal node where the variable is accessed.
+
+        Returns:
+            type: The type of the variable.
+        """
+        if symbol := self.current_scope.lookup(name):
+            self.set_node_info(node, symbol=symbol)
+            return symbol.get_type()
+
+        else:
+            self.set_node_info(node, kind=TokenKind.IDENTIFIER)
+            return PyType.ANY
+
     def set_variable_type(
         self, symbol: Symbol, type: PyType, override: bool = False
     ) -> PyType:
@@ -135,12 +154,23 @@ class PythonContext:
         node: TerminalNode,
         *,
         value_type: Optional[PyType] = None,
+        override_type: bool = False,
     ):
+        """
+        Defines an attribute on a type.
+
+        Args:
+            on_type: The type to define the attribute on.
+            name: The name of the attribute.
+            node: The terminal node where the attribute is defined.
+            value_type: The type of the attribute value (optional).
+            override_type: Whether to override the existing attribute type.
+        """
         if symbol := on_type.get_attr(name):
             # If the attribute exists, the target is an attribute.
             self.set_node_info(node, symbol=symbol)
             if value_type is not None:
-                self.set_variable_type(symbol, value_type)
+                self.set_variable_type(symbol, value_type, override=override_type)
 
         elif isinstance(on_type, PyInstanceType):
             # If the attribute does not exist, but the primary is an instance,
@@ -153,6 +183,28 @@ class PythonContext:
         else:
             # The attribute cannot be defined on the type.
             self.set_node_info(node, kind=TokenKind.FIELD)
+
+    def access_attribute(
+        self, on_type: PyType, name: str, node: TerminalNode
+    ) -> PyType:
+        """
+        Accesses an attribute on a type.
+
+        Args:
+            on_type: The type to access the attribute on.
+            name: The name of the attribute.
+            node: The terminal node where the attribute is accessed.
+
+        Returns:
+            type: The type of the attribute.
+        """
+        if symbol := on_type.get_attr(name):
+            self.set_node_info(node, symbol=symbol)
+            return symbol.get_type()
+
+        else:
+            self.set_node_info(node, kind=TokenKind.FIELD)
+            return PyType.ANY
 
 
 @dataclasses.dataclass
