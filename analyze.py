@@ -73,20 +73,22 @@ def main(args):
 
     assert "." not in source_path.stem, "source file name should not contain '.'"
 
-    # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-resolution-ordering
     search_context = get_search_context()
 
-    search_paths = []
-    search_paths.append(source_path.parent)
-    search_paths.append(search_context.typeshed)
-    search_paths.extend(search_context.search_path)
+    analyzer = PythonAnalyzer(search_paths=[search_context.typeshed])
 
-    analyzer = PythonAnalyzer(search_paths)
-
-    if args.builtins:
-        analyzer.load_builtins()
+    if args.typeshed:
+        analyzer.load_typeshed()
     else:
-        analyzer.builtins_loaded = True
+        analyzer.typeshed_loaded = True
+
+    # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-resolution-ordering
+    search_paths = [
+        source_path.parent,
+        search_context.typeshed,
+        *search_context.search_path,
+    ]
+    analyzer.importer.search_paths = search_paths
 
     module = PyModule(source_path.stem, source_path)
     analyzer.importer.load_module(module)
@@ -148,7 +150,7 @@ def parse_args(args: list[str] = None):
     parser = argparse.ArgumentParser()
     parser.add_argument("input", help="input file")
     parser.add_argument("-o", "--output", help="output file")
-    parser.add_argument("-b", "--builtins", help="load builtins", action="store_true")
+    parser.add_argument("--no-typeshed", dest="typeshed", action="store_false", help="do not load typeshed")
     # fmt: on
 
     return parser.parse_args(args)

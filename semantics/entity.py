@@ -10,7 +10,7 @@ from .types import (
     PyModuleType,
     PySelfType,
     PyType,
-    get_context_cls,
+    get_stub_class,
 )
 
 if TYPE_CHECKING:
@@ -211,7 +211,7 @@ class PyClass(_ModifiersMixin, PyEntity):
             mro_lists = [l for l in mro_lists if l]
 
         # All classes have `object` as the last base class.
-        if (object_cls := get_context_cls("object")) and result[-1] is not object_cls:
+        if (object_cls := get_stub_class("object")) and result[-1] is not object_cls:
             result.append(object_cls)
 
         self.mro = result

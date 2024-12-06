@@ -6,7 +6,7 @@ from semantics.entity import PyModule
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
-from semantics.types import set_type_context, get_context_cls
+from semantics.types import get_stub_class, set_type_context
 from semantics.visitor import PythonVisitor
 
 from .modules import ModuleManager, PyImportError
@@ -16,9 +16,9 @@ from .source import PythonSource
 class PythonAnalyzer:
     def __init__(self, search_paths: list[Path]):
         self.builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
-        self.type_scopes = {"builtins": self.builtin_scope}
+        self.type_stubs: dict[str, SymbolTable] = {}
         self.importer = ModuleManager(search_paths, self.load_module)
-        self.builtins_loaded = False
+        self.typeshed_loaded = False
         self.pending_second_pass: list[PyModule] = []
 
     def load_module(self, module: PyModule):
@@ -38,7 +38,7 @@ class PythonAnalyzer:
 
             self.load_imports(module)
 
-            if self.builtins_loaded:
+            if self.typeshed_loaded:
                 with self.set_type_context():
                     visitor.second_pass(module.source.tree)
             else:
@@ -191,12 +191,9 @@ class PythonAnalyzer:
 
         return submodule
 
-    def load_builtins(self, load_types: bool = True):
+    def load_typeshed(self):
         """
-        Loads the built-in symbols.
-
-        Args:
-            load_types: Whether to load the built-in types.
+        Loads the built-in symbols from the typeshed stubs.
         """
         builtins_module = self.importer.import_module("builtins")
 
@@ -205,20 +202,19 @@ class PythonAnalyzer:
                 symbol.copy(node=None, public=None, target=symbol)
             )
 
-        if load_types:
-            for module_name in ("types", "typing", "abc"):
-                module = self.importer.import_module(module_name)
-                self.type_scopes[module_name] = module.context.global_scope
+        for module_name in ("builtins", "types", "typing", "abc"):
+            module = self.importer.import_module(module_name)
+            self.type_stubs[module_name] = module.context.global_scope
 
-            with self.set_type_context():
-                module_cls = get_context_cls("types.ModuleType")
-                assert module_cls is not None, "types.ModuleType not found"
-                for symbol in module_cls.scope.symbols():
-                    self.builtin_scope.define(
-                        symbol.copy(node=None, public=None, target=symbol)
-                    )
+        with self.set_type_context():
+            module_cls = get_stub_class("types.ModuleType")
+            assert module_cls is not None, "types.ModuleType not found"
+            for symbol in module_cls.scope.symbols():
+                self.builtin_scope.define(
+                    symbol.copy(node=None, public=None, target=symbol)
+                )
 
-        self.builtins_loaded = True
+        self.typeshed_loaded = True
 
         with self.set_type_context():
             for module in self.pending_second_pass:
@@ -231,4 +227,4 @@ class PythonAnalyzer:
         """
         Sets the context for the type analyzer.
         """
-        return set_type_context(self.type_scopes)
+        return set_type_context(self.type_stubs)

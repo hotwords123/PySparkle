@@ -15,7 +15,7 @@ from types import EllipsisType, NoneType
 from typing import TYPE_CHECKING, Iterable, Optional, final
 
 from .scope import SymbolTable
-from .symbol import Symbol, SymbolType
+from .symbol import Symbol
 
 if TYPE_CHECKING:
     from .entity import PyClass, PyEntity, PyFunction, PyModule
@@ -24,20 +24,20 @@ if TYPE_CHECKING:
 
 class _TypeContext(threading.local):
     def __init__(self):
-        self.contexts: dict[str, SymbolTable] = {}
+        self.stubs: dict[str, SymbolTable] = {}
 
 
 _type_context = _TypeContext()
 
 
 @contextmanager
-def set_type_context(contexts: dict[str, SymbolTable]):
-    _type_context.contexts = contexts
+def set_type_context(stubs: dict[str, SymbolTable]):
+    _type_context.stubs = stubs
     yield
-    _type_context.contexts = {}
+    _type_context.stubs = {}
 
 
-def get_context_symbol(name: str) -> Optional[Symbol]:
+def get_stub_symbol(name: str) -> Optional[Symbol]:
     """
     Retrieves a symbol from the current type context by name.
 
@@ -51,30 +51,30 @@ def get_context_symbol(name: str) -> Optional[Symbol]:
     else:
         context = "builtins"
 
-    if scope := _type_context.contexts.get(context):
+    if scope := _type_context.stubs.get(context):
         return scope.get(name)
     return None
 
 
-def get_context_entity(name: str) -> Optional["PyEntity"]:
-    if symbol := get_context_symbol(name):
+def get_stub_entity(name: str) -> Optional["PyEntity"]:
+    if symbol := get_stub_symbol(name):
         return symbol.resolve_entity()
     return None
 
 
-def get_context_cls(name: str) -> Optional["PyClass"]:
+def get_stub_class(name: str) -> Optional["PyClass"]:
     from .entity import PyClass
 
-    if isinstance(entity := get_context_entity(name), PyClass):
+    if isinstance(entity := get_stub_entity(name), PyClass):
         return entity
 
     return None
 
 
-def get_context_func(name: str) -> Optional["PyFunction"]:
+def get_stub_func(name: str) -> Optional["PyFunction"]:
     from .entity import PyFunction
 
-    if isinstance(entity := get_context_entity(name), PyFunction):
+    if isinstance(entity := get_stub_entity(name), PyFunction):
         return entity
 
     return None
@@ -219,7 +219,7 @@ class PyModuleType(PyType):
     def attr_scopes(self) -> Iterable[SymbolTable]:
         yield self.module.context.global_scope
 
-        if module_cls := get_context_cls("types.ModuleType"):
+        if module_cls := get_stub_class("types.ModuleType"):
             yield from module_cls.mro_scopes()
 
 
@@ -254,8 +254,8 @@ class PyClassType(PyType):
         return self.cls.get_instance_type()
 
     @classmethod
-    def from_builtin(cls, name: str) -> PyType:
-        if entity := get_context_cls(name):
+    def from_stub(cls, name: str) -> PyType:
+        if entity := get_stub_class(name):
             return cls(entity)
         return PyType.ANY
 
@@ -265,7 +265,7 @@ class PyInstanceType(PyType):
         self.cls = cls
 
     def __str__(self) -> str:
-        if self.cls is get_context_cls("types.NoneType"):
+        if self.cls is get_stub_class("types.NoneType"):
             return "None"
 
         return self.cls.name
@@ -289,8 +289,8 @@ class PyInstanceType(PyType):
         return self.cls.get_method_return_type("__await__")
 
     @classmethod
-    def from_builtin(cls, name: str) -> PyType:
-        if entity := get_context_cls(name):
+    def from_stub(cls, name: str) -> PyType:
+        if entity := get_stub_class(name):
             return cls(entity)
         return PyType.ANY
 
@@ -326,7 +326,7 @@ class PyFunctionType(PyType):
         return self.func
 
     def attr_scopes(self) -> Iterable[SymbolTable]:
-        if function_cls := get_context_cls("types.FunctionType"):
+        if function_cls := get_stub_class("types.FunctionType"):
             return PyClassType(function_cls).attr_scopes()
         return ()
 
@@ -338,8 +338,8 @@ class PyFunctionType(PyType):
         return self
 
     @staticmethod
-    def from_builtin(name: str) -> PyType:
-        if func := get_context_func(name):
+    def from_stub(name: str) -> PyType:
+        if func := get_stub_func(name):
             return PyFunctionType(func)
         return PyType.ANY
 
@@ -404,7 +404,7 @@ class PyLiteralType(PyType):
         """
         Returns the base type of the literal.
         """
-        return PyInstanceType.from_builtin(LITERAL_TYPE_MAP[self.value_type])
+        return PyInstanceType.from_stub(LITERAL_TYPE_MAP[self.value_type])
 
     def attr_scopes(self) -> Iterable[SymbolTable]:
         return self.get_base_type().attr_scopes()
@@ -412,7 +412,7 @@ class PyLiteralType(PyType):
     def get_annotated_type(self, context: "PythonContext") -> PyType:
         # None stands its own type in type annotations.
         if self.value is None:
-            return PyInstanceType.from_builtin("types.NoneType")
+            return PyInstanceType.from_stub("types.NoneType")
 
         # String literals can represent forward references.
         if self.value_type is str:

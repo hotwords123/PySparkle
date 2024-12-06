@@ -24,13 +24,7 @@ from .structure import (
 )
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
-from .types import (
-    PyClassType,
-    PyInstanceType,
-    PyLiteralType,
-    PyType,
-    get_context_entity,
-)
+from .types import PyClassType, PyInstanceType, PyLiteralType, PyType, get_stub_entity
 
 
 def _visitor_guard(func):
@@ -93,7 +87,7 @@ def _modifier_from_decorator(
 ) -> Optional[str]:
     if entity := decorator.entity:
         for name, modifier in modifiers.items():
-            if entity is get_context_entity(name):
+            if entity is get_stub_entity(name):
                 return modifier
 
     return None
@@ -633,7 +627,7 @@ class PythonVisitor(PythonParserVisitor):
 
             elif self.pass_num == 2:
                 # TODO: respect original annotations.
-                param.type = PyInstanceType.from_builtin("tuple")
+                param.type = PyInstanceType.from_stub("tuple")
 
         elif node := ctx.paramNoDefaultStarAnnotation():
             parameters.append(param := self.visitParamNoDefaultStarAnnotation(node))
@@ -658,7 +652,7 @@ class PythonVisitor(PythonParserVisitor):
 
         elif self.pass_num == 2:
             # TODO: respect original annotations.
-            param.type = PyInstanceType.from_builtin("dict")
+            param.type = PyInstanceType.from_stub("dict")
 
         return param
 
@@ -870,7 +864,7 @@ class PythonVisitor(PythonParserVisitor):
         if ctx.NOT():
             self.visitLogical(ctx.logical(0))
 
-            return PyInstanceType.from_builtin("bool")
+            return PyInstanceType.from_stub("bool")
 
         elif ctx.AND() or ctx.OR():
             left_type = self.visitLogical(ctx.logical(0))
@@ -894,7 +888,7 @@ class PythonVisitor(PythonParserVisitor):
         if pairs:
             # TODO: The result of a comparison is not necessarily a boolean for
             # custom comparison methods.
-            return PyInstanceType.from_builtin("bool")
+            return PyInstanceType.from_stub("bool")
         else:
             return type_
 
@@ -1088,7 +1082,7 @@ class PythonVisitor(PythonParserVisitor):
                 param.spec.star = "*"
 
             elif self.pass_num == 2:
-                param.type = PyInstanceType.from_builtin("tuple")
+                param.type = PyInstanceType.from_stub("tuple")
 
         for node in ctx.lambdaParamMaybeDefault():
             parameters.append(param := self.visitLambdaParamMaybeDefault(node))
@@ -1109,7 +1103,7 @@ class PythonVisitor(PythonParserVisitor):
             param.spec.star = "**"
 
         elif self.pass_num == 2:
-            param.type = PyInstanceType.from_builtin("dict")
+            param.type = PyInstanceType.from_stub("dict")
 
         return param
 
@@ -1211,7 +1205,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitStarNamedExpressions(expressions)
 
         # TODO: literals
-        return PyInstanceType.from_builtin("list")
+        return PyInstanceType.from_stub("list")
 
     # tuple: '(' (starNamedExpression ',' starNamedExpressions?)? ')';
     @_type_check
@@ -1224,7 +1218,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitStarNamedExpressions(expressions)
 
         # TODO: literals
-        return PyInstanceType.from_builtin("tuple")
+        return PyInstanceType.from_stub("tuple")
 
     # set: '{' starNamedExpressions '}';
     @_type_check
@@ -1233,7 +1227,7 @@ class PythonVisitor(PythonParserVisitor):
         self.visitStarNamedExpressions(ctx.starNamedExpressions())
 
         # TODO: literals
-        return PyInstanceType.from_builtin("set")
+        return PyInstanceType.from_stub("set")
 
     # dict: '{' doubleStarredKvpairs? '}';
     @_type_check
@@ -1243,7 +1237,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitDoubleStarredKvpairs(kvpairs)
 
         # TODO: literals
-        return PyInstanceType.from_builtin("dict")
+        return PyInstanceType.from_stub("dict")
 
     # forIfClauses: forIfClause+;
     @_visitor_guard
@@ -1284,7 +1278,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_builtin("list")
+            return PyInstanceType.from_stub("list")
 
     # setcomp: '{' namedExpression forIfClauses '}';
     @_visitor_guard
@@ -1299,7 +1293,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_builtin("set")
+            return PyInstanceType.from_stub("set")
 
     # genexp: '(' namedExpression forIfClauses ')';
     @_visitor_guard
@@ -1314,7 +1308,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_builtin("types.GeneratorType")
+            return PyInstanceType.from_stub("types.GeneratorType")
 
     # dictcomp: '{' kvpair forIfClauses '}';
     @_visitor_guard
@@ -1329,7 +1323,7 @@ class PythonVisitor(PythonParserVisitor):
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_builtin("dict")
+            return PyInstanceType.from_stub("dict")
 
     # arguments: args ','?;
     @_type_check
