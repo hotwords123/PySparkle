@@ -1,12 +1,10 @@
 import dataclasses
 from contextlib import contextmanager
-from typing import Iterator, Literal, NamedTuple, Optional, Unpack
+from typing import Iterator, NamedTuple, Optional, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
-
-from grammar import PythonParser
 
 from .entity import PyEntity, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
@@ -271,27 +269,6 @@ class PyImportFromAsName(NamedTuple):
     name: str
     alias: Optional[str]
     symbol: Symbol
-
-
-@dataclasses.dataclass
-class PyParameterSpec:
-    """
-    Represents a parameter specification.
-
-    Attributes:
-        posonly: Whether the parameter is positional-only.
-        kwonly: Whether the parameter is keyword-only.
-        star: Whether the parameter is a star or double-star parameter.
-        annotation: The type annotation of the parameter.
-        default: The default value of the parameter.
-    """
-
-    posonly: bool = False
-    kwonly: bool = False
-    star: Optional[Literal["*", "**"]] = None
-    annotation: Optional[PythonParser.AnnotationContext] = None
-    star_annotation: Optional[PythonParser.StarAnnotationContext] = None
-    default: Optional[PythonParser.DefaultContext] = None
 
 
 @dataclasses.dataclass

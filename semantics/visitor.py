@@ -18,7 +18,6 @@ from .structure import (
     PyImportFromTargets,
     PyImportName,
     PyKeywordArgument,
-    PyParameterSpec,
     PyPositionalArgument,
     PythonContext,
 )
@@ -529,8 +528,8 @@ class PythonVisitor(PythonParserVisitor):
                         entity.is_method
                         and parameters
                         and (first_param := parameters[0]).type is None
-                        and not first_param.spec.kwonly
-                        and first_param.spec.star is None
+                        and not first_param.kwonly
+                        and first_param.star is None
                     ):
                         if entity.has_modifier("classmethod"):
                             # Class methods have a `cls` parameter.
@@ -585,7 +584,7 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 1:
             for param in parameters:
-                param.spec.posonly = True
+                param.posonly = True
 
         return parameters
 
@@ -606,7 +605,7 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 1:
             for param in parameters:
-                param.spec.posonly = True
+                param.posonly = True
 
         return parameters
 
@@ -623,7 +622,7 @@ class PythonVisitor(PythonParserVisitor):
             parameters.append(param := self.visitParamNoDefault(node))
 
             if self.pass_num == 1:
-                param.spec.star = "*"
+                param.star = "*"
 
             elif self.pass_num == 2:
                 # TODO: respect original annotations.
@@ -636,7 +635,7 @@ class PythonVisitor(PythonParserVisitor):
             parameters.append(param := self.visitParamMaybeDefault(node))
 
             if self.pass_num == 1:
-                param.spec.kwonly = True
+                param.kwonly = True
 
         if node := ctx.kwds():
             parameters.append(self.visitKwds(node))
@@ -648,7 +647,7 @@ class PythonVisitor(PythonParserVisitor):
         param = self.visitParamNoDefault(ctx.paramNoDefault())
 
         if self.pass_num == 1:
-            param.spec.star = "**"
+            param.star = "**"
 
         elif self.pass_num == 2:
             # TODO: respect original annotations.
@@ -677,7 +676,7 @@ class PythonVisitor(PythonParserVisitor):
         default = self.visitDefault(default_node := ctx.default())
 
         if self.pass_num == 1:
-            param.spec.default = default_node
+            param.default = default_node
 
         elif self.pass_num == 2:
             if param.type is None:
@@ -695,7 +694,7 @@ class PythonVisitor(PythonParserVisitor):
             default = self.visitDefault(default_node)
 
             if self.pass_num == 1:
-                param.spec.default = default_node
+                param.default = default_node
 
             elif self.pass_num == 2:
                 if param.type is None:
@@ -712,8 +711,7 @@ class PythonVisitor(PythonParserVisitor):
         annotation_node = ctx.annotation()
 
         if self.pass_num == 1:
-            param_spec = PyParameterSpec(annotation=annotation_node)
-            param = PyParameter(name, param_spec)
+            param = PyParameter(name, annotation=annotation_node)
             self.context.entities[ctx] = param
 
             symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
@@ -747,8 +745,7 @@ class PythonVisitor(PythonParserVisitor):
         annotation_node = ctx.starAnnotation()
 
         if self.pass_num == 1:
-            param_spec = PyParameterSpec(star=True, star_annotation=annotation_node)
-            param = PyParameter(name, param_spec)
+            param = PyParameter(name, star=True, star_annotation=annotation_node)
 
             symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
             self.context.set_node_info(
@@ -1040,7 +1037,7 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 1:
             for param in parameters:
-                param.spec.posonly = True
+                param.posonly = True
 
         return parameters
 
@@ -1061,7 +1058,7 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 1:
             for param in parameters:
-                param.spec.posonly = True
+                param.posonly = True
 
         return parameters
 
@@ -1079,7 +1076,7 @@ class PythonVisitor(PythonParserVisitor):
             parameters.append(param := self.visitLambdaParamNoDefault(node))
 
             if self.pass_num == 1:
-                param.spec.star = "*"
+                param.star = "*"
 
             elif self.pass_num == 2:
                 param.type = PyInstanceType.from_stub("tuple")
@@ -1088,7 +1085,7 @@ class PythonVisitor(PythonParserVisitor):
             parameters.append(param := self.visitLambdaParamMaybeDefault(node))
 
             if self.pass_num == 1:
-                param.spec.kwonly = True
+                param.kwonly = True
 
         if node := ctx.lambdaKwds():
             parameters.append(self.visitLambdaKwds(node))
@@ -1100,7 +1097,7 @@ class PythonVisitor(PythonParserVisitor):
         param = self.visitLambdaParamNoDefault(ctx.lambdaParamNoDefault())
 
         if self.pass_num == 1:
-            param.spec.star = "**"
+            param.star = "**"
 
         elif self.pass_num == 2:
             param.type = PyInstanceType.from_stub("dict")
@@ -1122,7 +1119,7 @@ class PythonVisitor(PythonParserVisitor):
         default = self.visitDefault(ctx.default())
 
         if self.pass_num == 1:
-            param.spec.default = ctx.default()
+            param.default = ctx.default()
 
         elif self.pass_num == 2:
             param.type = default.get_inferred_type()
@@ -1139,7 +1136,7 @@ class PythonVisitor(PythonParserVisitor):
             default = self.visitDefault(default_node)
 
             if self.pass_num == 1:
-                param.spec.default = default_node
+                param.default = default_node
 
             elif self.pass_num == 2:
                 param.type = default.get_inferred_type()
@@ -1153,7 +1150,7 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            param = PyParameter(name, PyParameterSpec())
+            param = PyParameter(name)
             self.context.entities[ctx] = param
 
             symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)

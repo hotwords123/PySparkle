@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional, Literal
 
 from .scope import ScopeType, SymbolTable
 from .types import (
@@ -15,8 +15,9 @@ from .types import (
 
 if TYPE_CHECKING:
     from core.source import PythonSource
+    from grammar import PythonParser
 
-    from .structure import PyArguments, PyParameterSpec, PythonContext
+    from .structure import PyArguments, PythonContext
 
 
 class PyEntity(ABC):
@@ -281,20 +282,35 @@ class PyParameter(PyVariable):
     def __init__(
         self,
         name: str,
-        spec: "PyParameterSpec",
         type: Optional[PyType] = None,
+        *,
+        kwonly: bool = False,
+        posonly: bool = False,
+        star: Optional[Literal["*", "**"]] = None,
+        annotation: Optional["PythonParser.AnnotationContext"] = None,
+        star_annotation: Optional["PythonParser.StarAnnotationContext"] = None,
+        default: Optional["PythonParser.DefaultContext"] = None,
     ):
+        """
+        Args:
+            posonly: Whether the parameter is positional-only.
+            kwonly: Whether the parameter is keyword-only.
+            star: Whether the parameter is a star or double-star parameter.
+            annotation: The type annotation of the parameter.
+            star_annotation: The starred type annotation of the parameter.
+            default: The default value of the parameter.
+        """
         super().__init__(name, type)
-        self.spec = spec
+
+        self.kwonly = kwonly
+        self.posonly = posonly
+        self.star = star
+        self.annotation = annotation
+        self.star_annotation = star_annotation
+        self.default = default
 
     def __str__(self):
-        return f"<parameter {self.spec.star or ''}{self.name}>"
-
-    def __repr__(self):
-        return (
-            f"<{self.__class__.__name__} {self.name!r}"
-            f" spec={self.spec!r} type={self.type!r}>"
-        )
+        return f"<parameter {self.star or ''}{self.name}>"
 
 
 class PyTypeError(Exception):
