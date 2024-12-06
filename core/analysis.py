@@ -2,11 +2,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from semantics.entity import PyModule, PyPackage
+from semantics.entity import PyModule
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
-from semantics.types import set_type_context
+from semantics.types import set_type_context, get_context_cls
 from semantics.visitor import PythonVisitor
 
 from .modules import ModuleManager, PyImportError
@@ -55,22 +55,8 @@ class PythonAnalyzer:
         # Define the built-in symbols on module objects.
         # https://docs.python.org/3/library/stdtypes.html#module-objects
 
-        scope.define(Symbol(SymbolType.VARIABLE, "__name__"))
-        scope.define(Symbol(SymbolType.VARIABLE, "__spec__"))
-        scope.define(Symbol(SymbolType.VARIABLE, "__package__"))
-        scope.define(Symbol(SymbolType.VARIABLE, "__loader__"))
-
-        if isinstance(module, PyPackage):
-            scope.define(Symbol(SymbolType.VARIABLE, "__path__"))
-
-        if module.path is not None:
-            scope.define(Symbol(SymbolType.VARIABLE, "__file__"))
-            scope.define(Symbol(SymbolType.VARIABLE, "__cached__"))
-
         scope.define(Symbol(SymbolType.VARIABLE, "__doc__"))
         scope.define(Symbol(SymbolType.VARIABLE, "__annotations__"))
-
-        scope.define(Symbol(SymbolType.VARIABLE, "__dict__"))
 
         return scope
 
@@ -215,12 +201,22 @@ class PythonAnalyzer:
         builtins_module = self.importer.import_module("builtins")
 
         for symbol in builtins_module.context.global_scope.symbols(public_only=True):
-            self.builtin_scope.define(symbol)
+            self.builtin_scope.define(
+                symbol.copy(node=None, public=None, target=symbol)
+            )
 
         if load_types:
             for module_name in ("types", "typing", "abc"):
                 module = self.importer.import_module(module_name)
                 self.type_scopes[module_name] = module.context.global_scope
+
+            with self.set_type_context():
+                module_cls = get_context_cls("types.ModuleType")
+                assert module_cls is not None, "types.ModuleType not found"
+                for symbol in module_cls.scope.symbols():
+                    self.builtin_scope.define(
+                        symbol.copy(node=None, public=None, target=symbol)
+                    )
 
         self.builtins_loaded = True
 

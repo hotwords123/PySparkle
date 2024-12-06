@@ -46,6 +46,29 @@ class Symbol:
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} type={self.type})>"
 
+    def copy(
+        self,
+        node: Optional[TerminalNode] = ...,
+        public: Optional[bool] = ...,
+        target: Optional["Symbol"] = ...,
+    ) -> "Symbol":
+        """
+        Returns a copy of the symbol.
+
+        Args:
+            node: The new node for the symbol.
+            public: The new public flag for the symbol.
+            target: The new target for the symbol.
+        """
+        return Symbol(
+            self.type,
+            self.name,
+            self.node if node is Ellipsis else node,
+            public=self.public if public is Ellipsis else public,
+            target=self.target if target is Ellipsis else target,
+            entity=self.entity,
+        )
+
     def is_outer(self) -> bool:
         """
         Returns whether the symbol is an outer symbol (global or nonlocal).

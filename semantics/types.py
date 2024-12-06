@@ -217,7 +217,10 @@ class PyModuleType(PyType):
         return self.module
 
     def attr_scopes(self) -> Iterable[SymbolTable]:
-        return (self.module.context.global_scope,)
+        yield self.module.context.global_scope
+
+        if module_cls := get_context_cls("types.ModuleType"):
+            yield from module_cls.mro_scopes()
 
 
 @final
