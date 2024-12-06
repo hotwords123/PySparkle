@@ -16,7 +16,7 @@ from .source import PythonSource
 class PythonAnalyzer:
     def __init__(self, search_paths: list[Path]):
         self.builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
-        self.types_scope: Optional[SymbolTable] = None
+        self.type_scopes = {"builtins": self.builtin_scope}
         self.importer = ModuleManager(search_paths, self.load_module)
         self.builtins_loaded = False
         self.pending_second_pass: list[PyModule] = []
@@ -218,8 +218,9 @@ class PythonAnalyzer:
             self.builtin_scope.define(symbol)
 
         if load_types:
-            types_module = self.importer.import_module("types")
-            self.types_scope = types_module.context.global_scope
+            for module_name in ("types", "typing", "abc"):
+                module = self.importer.import_module(module_name)
+                self.type_scopes[module_name] = module.context.global_scope
 
         self.builtins_loaded = True
 
@@ -234,9 +235,4 @@ class PythonAnalyzer:
         """
         Sets the context for the type analyzer.
         """
-        return set_type_context(
-            {
-                "builtins": self.builtin_scope,
-                "types": self.types_scope,
-            }
-        )
+        return set_type_context(self.type_scopes)

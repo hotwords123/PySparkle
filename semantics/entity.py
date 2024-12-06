@@ -19,6 +19,13 @@ class PyEntity(ABC):
     def __init__(self, name: str):
         self.name = name
 
+    @abstractmethod
+    def __str__(self) -> str:
+        """
+        Returns a string representation of the entity.
+        """
+        pass
+
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.name!r}>"
 
@@ -44,6 +51,9 @@ class PyModule(PyEntity):
         self.context: Optional[PythonContext] = None
         self.loaded = False
 
+    def __str__(self):
+        return f"<module {self.name!r}>"
+
     def __repr__(self):
         s = f"<{self.__class__.__name__} {self.name!r}"
         if self.path is not None:
@@ -68,12 +78,36 @@ class PyPackage(PyModule):
         self.import_paths = import_paths
 
 
-class PyClass(PyEntity):
+class _ModifiersMixin:
+    __slots__ = ("modifiers",)
+
+    def init_modifiers(self):
+        self.modifiers: set[str] = set()
+
+    def has_modifier(self, *modifiers: str) -> bool:
+        """
+        Checks if the entity has all the specified modifiers.
+        """
+        return all(modifier in self.modifiers for modifier in modifiers)
+
+    def set_modifier(self, *modifiers: str):
+        """
+        Sets the specified modifiers on the entity.
+        """
+        self.modifiers.update(modifiers)
+
+
+class PyClass(_ModifiersMixin, PyEntity):
     def __init__(self, name: str, scope: "SymbolTable"):
         super().__init__(name)
         self.scope = scope
         self.instance_scope = SymbolTable(f"<object '{name}'>", ScopeType.OBJECT)
         self.decorators: list[PyType] = []
+
+        self.init_modifiers()
+
+    def __str__(self) -> str:
+        return f"<class {self.name!r}>"
 
     def get_type(self) -> PyClassType:
         return PyClassType(self)
@@ -94,7 +128,7 @@ class PyClass(PyEntity):
         return PyType.ANY
 
 
-class PyFunction(PyEntity):
+class PyFunction(_ModifiersMixin, PyEntity):
     def __init__(self, name: str, scope: "SymbolTable", cls: Optional[PyClass] = None):
         super().__init__(name)
         self.scope = scope
@@ -103,13 +137,37 @@ class PyFunction(PyEntity):
         self.return_type: Optional[PyType] = None
         self.decorators: list[PyType] = []
 
+        self.init_modifiers()
+
+    def __str__(self) -> str:
+        if self.is_method:
+            if self.has_modifier("property"):
+                tag = "property"
+            elif self.has_modifier("classmethod"):
+                tag = "classmethod"
+            elif self.has_modifier("staticmethod"):
+                tag = "staticmethod"
+            else:
+                tag = "method"
+
+            return f"<{tag} {self.cls.name}.{self.name}>"
+
+        return f"<function {self.name}>"
+
     def get_type(self) -> PyFunctionType:
         return PyFunctionType(self)
+
+    @property
+    def is_method(self) -> bool:
+        return self.cls is not None
 
 
 class PyLambda(PyFunction):
     def __init__(self, scope: "SymbolTable"):
         super().__init__("<lambda>", scope)
+
+    def __str__(self):
+        return "<lambda>"
 
     def __repr__(self):
         return f"<{self.__class__.__name__}>"
@@ -119,6 +177,9 @@ class PyVariable(PyEntity):
     def __init__(self, name: str, type: Optional[PyType] = None):
         super().__init__(name)
         self.type = type
+
+    def __str__(self):
+        return f"<variable {self.name}>"
 
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.name!r} type={self.type!r}>"
@@ -136,6 +197,9 @@ class PyParameter(PyVariable):
     ):
         super().__init__(name, type)
         self.spec = spec
+
+    def __str__(self):
+        return f"<parameter {self.spec.star or ''}{self.name}>"
 
     def __repr__(self):
         return (

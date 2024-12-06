@@ -11,7 +11,7 @@ from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
 from grammar import PythonParser
-from semantics.entity import PyModule
+from semantics.entity import PyFunction, PyModule
 from semantics.structure import PythonContext
 from semantics.symbol import Symbol, SymbolType
 from semantics.token import TOKEN_KIND_MAP, TokenKind
@@ -29,16 +29,20 @@ def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
                 case SymbolType.VARIABLE | SymbolType.PARAMETER:
                     return TokenKind.VARIABLE
                 case SymbolType.FUNCTION:
-                    return TokenKind.FUNCTION
+                    pass  # May be a @property method.
                 case SymbolType.CLASS:
                     return TokenKind.CLASS
                 case SymbolType.GLOBAL | SymbolType.NONLOCAL | SymbolType.IMPORTED:
-                    # Unresolved symbols.
-                    pass
+                    pass  # Unresolved symbols.
 
             if entity := symbol.resolve_entity():
                 if isinstance(entity, PyModule):
                     return TokenKind.MODULE
+
+                if isinstance(entity, PyFunction):
+                    if entity.has_modifier("property"):
+                        return TokenKind.VARIABLE
+                    return TokenKind.FUNCTION
 
                 return TokenKind.VARIABLE
 

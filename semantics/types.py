@@ -9,15 +9,16 @@ References
 """
 
 import threading
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from types import EllipsisType, NoneType
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional, final
 
 from .scope import SymbolTable
 from .symbol import Symbol, SymbolType
 
 if TYPE_CHECKING:
-    from .entity import PyClass, PyFunction, PyModule
+    from .entity import PyClass, PyEntity, PyFunction, PyModule
     from .structure import PythonContext
 
 
@@ -55,32 +56,59 @@ def get_context_symbol(name: str) -> Optional[Symbol]:
     return None
 
 
+def get_context_entity(name: str) -> Optional["PyEntity"]:
+    if symbol := get_context_symbol(name):
+        return symbol.resolve_entity()
+    return None
+
+
 def get_context_cls(name: str) -> Optional["PyClass"]:
     from .entity import PyClass
 
-    if (
-        (symbol := get_context_symbol(name))
-        and symbol.type is SymbolType.CLASS
-        and (entity := symbol.entity)
-        and isinstance(entity, PyClass)
-    ):
+    if isinstance(entity := get_context_entity(name), PyClass):
         return entity
 
     return None
 
 
-class PyType:
+def get_context_func(name: str) -> Optional["PyFunction"]:
+    from .entity import PyFunction
+
+    if isinstance(entity := get_context_entity(name), PyFunction):
+        return entity
+
+    return None
+
+
+class PyType(ABC):
     """
     A Python type.
     """
 
-    ANY: "PyType"
+    ANY: "_PyAnyType"
 
+    @abstractmethod
     def __str__(self) -> str:
-        return "Any"
+        """
+        Returns the string representation of the type.
+        """
+        pass
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks if two types are equal.
+        """
+        return True if self is other else NotImplemented
+
+    @property
+    def entity(self) -> Optional["PyEntity"]:
+        """
+        Returns the entity associated with the type, if any.
+        """
+        return None
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         """
@@ -90,7 +118,7 @@ class PyType:
 
     def attrs(self) -> Iterable[Symbol]:
         """
-        Returns an iterable of all attributes of the type.
+        Returns an iterable of all attributes of the type, removing duplicates.
         """
         visited: set[str] = set()
         for symbol in self._attrs():
@@ -99,6 +127,11 @@ class PyType:
                 yield symbol
 
     def _attrs(self) -> Iterable[Symbol]:
+        """
+        Returns an iterable of all attributes of the type.
+
+        This method should be overridden by subclasses.
+        """
         return ()
 
     def get_return_type(self) -> "PyType":
@@ -141,9 +174,19 @@ class PyType:
         return self
 
 
-PyType.ANY = PyType()
+@final
+class _PyAnyType(PyType):
+    def __str__(self) -> str:
+        return "Any"
+
+    def __eq__(self, other: object) -> bool:
+        return other is PyType.ANY
 
 
+PyType.ANY = _PyAnyType()
+
+
+@final
 class PyModuleType(PyType):
     def __init__(self, module: "PyModule"):
         self.module = module
@@ -154,6 +197,13 @@ class PyModuleType(PyType):
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} module={self.module!r}>"
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyModuleType) and self.module is other.module
+
+    @property
+    def entity(self) -> "PyEntity":
+        return self.module
+
     def get_attr(self, name: str) -> Optional[Symbol]:
         return self.module.context.global_scope.get(name)
 
@@ -161,6 +211,7 @@ class PyModuleType(PyType):
         yield from self.module.context.global_scope.symbols()
 
 
+@final
 class PyClassType(PyType):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
@@ -170,6 +221,13 @@ class PyClassType(PyType):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} class={self.cls!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyClassType) and self.cls is other.cls
+
+    @property
+    def entity(self) -> "PyEntity":
+        return self.cls
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         # TODO: Look up in the class hierarchy.
@@ -194,6 +252,7 @@ class PyClassType(PyType):
         return PyType.ANY
 
 
+@final
 class PyInstanceType(PyType):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
@@ -203,6 +262,12 @@ class PyInstanceType(PyType):
             return "None"
 
         return self.cls.name
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} class={self.cls!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyInstanceType) and self.cls is other.cls
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         # TODO: Look up in the class hierarchy.
@@ -230,22 +295,23 @@ class PyInstanceType(PyType):
         return PyType.ANY
 
 
+@final
 class PyFunctionType(PyType):
     def __init__(self, func: "PyFunction"):
         self.func = func
 
     def __str__(self) -> str:
-        from .entity import PyLambda
-
-        if isinstance(self.func, PyLambda):
-            return "<lambda>"
-        elif self.func.cls is not None:
-            return f"<method {self.func.cls.name}.{self.func.name}>"
-        else:
-            return f"<function {self.func.name}>"
+        return str(self.func)
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} function={self.func!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyFunctionType) and self.func is other.func
+
+    @property
+    def entity(self) -> "PyEntity":
+        return self.func
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         if function_cls := get_context_cls("types.FunctionType"):
@@ -262,6 +328,12 @@ class PyFunctionType(PyType):
     def get_inferred_type(self) -> PyType:
         # TODO: Infer the callable type from the function.
         return self
+
+    @staticmethod
+    def from_builtin(name: str) -> PyType:
+        if func := get_context_func(name):
+            return PyFunctionType(func)
+        return PyType.ANY
 
 
 type SimpleLiteral = None | bool | int | float | complex | str | bytes | EllipsisType
@@ -292,6 +364,7 @@ LITERAL_TYPE_MAP: dict[type, str] = {
 }
 
 
+@final
 class PyLiteralType(PyType):
     def __init__(self, value: CompoundLiteral):
         self.value = value
@@ -307,6 +380,9 @@ class PyLiteralType(PyType):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} value={self.value!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyLiteralType) and self.value == other.value
 
     @property
     def value_type(self) -> type:

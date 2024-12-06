@@ -20,7 +20,13 @@ from .structure import (
 )
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
-from .types import PyClassType, PyInstanceType, PyLiteralType, PyType
+from .types import (
+    PyClassType,
+    PyInstanceType,
+    PyLiteralType,
+    PyType,
+    get_context_entity,
+)
 
 
 def _visitor_guard(func):
@@ -52,6 +58,41 @@ def _type_check(func):
 class _OuterSymbol(NamedTuple):
     symbol: Symbol
     scope: SymbolTable
+
+
+_COMMON_MODIFIERS = {
+    # Type checking related
+    "typing.no_type_check": "no_type_check",
+    "typing.runtime_checkable": "runtime_checkable",
+    "typing.type_check_only": "type_check_only",
+}
+
+_CLASS_MODIFIERS = {
+    **_COMMON_MODIFIERS,
+    "typing.final": "final",
+}
+
+_FUNCTION_MODIFIERS = {
+    **_COMMON_MODIFIERS,
+    "typing.overload": "overload",
+    "staticmethod": "staticmethod",
+    "classmethod": "classmethod",
+    "property": "property",  # TODO: getter, setter, deleter
+    "typing.final": "final",
+    "typing.overload": "overload",
+    "abc.abstractmethod": "abstractmethod",
+}
+
+
+def _modifier_from_decorator(
+    decorator: PyType, modifiers: dict[str, str]
+) -> Optional[str]:
+    if entity := decorator.entity:
+        for name, modifier in modifiers.items():
+            if entity is get_context_entity(name):
+                return modifier
+
+    return None
 
 
 class PythonVisitor(PythonParserVisitor):
@@ -395,6 +436,10 @@ class PythonVisitor(PythonParserVisitor):
             entity: PyClass = self.context.entities[ctx]
             entity.decorators = decorators
 
+            for decorator in decorators:
+                if modifier := _modifier_from_decorator(decorator, _CLASS_MODIFIERS):
+                    entity.modifiers.add(modifier)
+
         if arguments := ctx.arguments():
             self.visitArguments(arguments)
 
@@ -446,6 +491,10 @@ class PythonVisitor(PythonParserVisitor):
             entity: PyFunction = self.context.entities[ctx]
             entity.decorators = decorators
 
+            for decorator in decorators:
+                if modifier := _modifier_from_decorator(decorator, _FUNCTION_MODIFIERS):
+                    entity.modifiers.add(modifier)
+
         if expression := ctx.expression():
             annotation = self.visitExpression(expression)
 
@@ -458,7 +507,26 @@ class PythonVisitor(PythonParserVisitor):
                 self.visitTypeParams(type_params)
 
             if parameters := ctx.parameters():
-                self.visitParameters(parameters)
+                parameters = self.visitParameters(parameters)
+
+                if self.pass_num == 1:
+                    entity.parameters.extend(parameters)
+
+                elif self.pass_num == 2:
+                    if (
+                        entity.is_method
+                        and parameters
+                        and (first_param := parameters[0]).type is None
+                        and not first_param.spec.kwonly
+                        and first_param.spec.star is None
+                    ):
+                        if entity.has_modifier("classmethod"):
+                            # Class methods have a `cls` parameter.
+                            first_param.type = entity.cls.get_type()
+
+                        elif not entity.has_modifier("staticmethod"):
+                            # Instance methods have a `self` parameter.
+                            first_param.type = entity.cls.get_instance_type()
 
             self.visitBlock(ctx.block())
 
@@ -806,7 +874,8 @@ class PythonVisitor(PythonParserVisitor):
             self.visitCompareOpBitwisePair(pair)
 
         if pairs:
-            # The result of a comparison is always a boolean.
+            # TODO: The result of a comparison is not necessarily a boolean for
+            # custom comparison methods.
             return PyInstanceType.from_builtin("bool")
         else:
             return type_
@@ -897,11 +966,15 @@ class PythonVisitor(PythonParserVisitor):
             entity: PyLambda = self.context.entities[ctx]
 
         with self.context.scope_guard(scope):
-            if parameters := ctx.lambdaParameters():
-                self.visitLambdaParameters(parameters)
+            if node := ctx.lambdaParameters():
+                parameters = self.visitLambdaParameters(node)
 
             type_ = self.visitExpression(ctx.expression())
-            if self.pass_num == 2:
+
+            if self.pass_num == 1:
+                entity.parameters.extend(parameters)
+
+            elif self.pass_num == 2:
                 type_: PyType
                 entity.return_type = type_.get_inferred_type()
 
