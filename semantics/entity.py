@@ -1,14 +1,21 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from .scope import ScopeType, SymbolTable
-from .types import PyClassType, PyFunctionType, PyInstanceType, PyModuleType, PyType
+from .types import (
+    PyClassType,
+    PyFunctionType,
+    PyInstanceType,
+    PyModuleType,
+    PyType,
+    get_context_cls,
+)
 
 if TYPE_CHECKING:
     from core.source import PythonSource
 
-    from .structure import PyParameterSpec, PythonContext
+    from .structure import PyArguments, PyParameterSpec, PythonContext
 
 
 class PyEntity(ABC):
@@ -103,6 +110,9 @@ class PyClass(_ModifiersMixin, PyEntity):
         self.scope = scope
         self.instance_scope = SymbolTable(f"<object '{name}'>", ScopeType.OBJECT)
         self.decorators: list[PyType] = []
+        self.arguments: Optional["PyArguments"] = None
+        self.bases: list[PyClass] = []
+        self.mro: list[PyClass] = []
 
         self.init_modifiers()
 
@@ -115,17 +125,91 @@ class PyClass(_ModifiersMixin, PyEntity):
     def get_instance_type(self) -> PyInstanceType:
         return PyInstanceType(self)
 
-    def get_method(self, name: str) -> Optional["PyFunction"]:
-        # TODO: Implement method lookup.
-        if symbol := self.scope.get(name):
-            if isinstance(entity := symbol.resolve_entity(), PyFunction):
-                return entity
+    def mro_scopes(self, instance: bool = False) -> Iterable[SymbolTable]:
+        """
+        Yields the scopes of the class and its bases in MRO order.
+
+        Args:
+            instance: Whether to yield the instance scope of the class.
+
+        Yields:
+            scope: The scope of a class or its instance.
+        """
+        if instance:
+            yield self.instance_scope
+
+        for cls in self.mro:
+            yield cls.scope
+
+    def lookup_method(self, name: str) -> Optional["PyFunction"]:
+        """
+        Looks up a method in the class and its bases.
+        """
+        for scope in self.mro_scopes():
+            if symbol := scope.get(name):
+                if isinstance(entity := symbol.resolve_entity(), PyFunction):
+                    return entity
+
         return None
 
     def get_method_return_type(self, name: str) -> PyType:
-        if method := self.get_method(name):
+        if method := self.lookup_method(name):
             return method.return_type or PyType.ANY
         return PyType.ANY
+
+    def compute_mro(self):
+        """
+        Computes the method resolution order for the class according to the C3
+        linearization algorithm.
+
+        References:
+        - https://docs.python.org/3/howto/mro.html
+        """
+        # Collect the MROs of the base classes.
+        mro_lists: list[list[PyClass]] = []
+        for base in self.bases:
+            if not base.mro:
+                raise PyTypeError(
+                    f"Cannot inherit from base class {base.name!r} before it is defined"
+                    f" (in class {self.name!r})"
+                )
+            mro_lists.append(base.mro.copy())
+
+        # Add the base classes to preserve the orderings.
+        if self.bases:
+            mro_lists.append([base for base in self.bases])
+
+        # The MRO always starts with the class itself.
+        result: list[PyClass] = [self]
+
+        while mro_lists:
+            # Find the first head element that is not in the tail of any other list.
+            for mro_list in mro_lists:
+                head = mro_list[0]
+                if any(head in l[1:] for l in mro_lists):
+                    continue
+                break
+            else:
+                raise PyTypeError(
+                    f"Cannot create a consistent MRO (in class {self.name!r})"
+                )
+
+            # Add the head element to the MRO.
+            result.append(head)
+
+            # Remove the head element from the lists.
+            for mro_list in mro_lists:
+                if mro_list[0] is head:
+                    del mro_list[0]
+
+            # Remove the lists that are now empty.
+            mro_lists = [l for l in mro_lists if l]
+
+        # All classes have `object` as the last base class.
+        if (object_cls := get_context_cls("object")) and result[-1] is not object_cls:
+            result.append(object_cls)
+
+        self.mro = result
 
 
 class PyFunction(_ModifiersMixin, PyEntity):
@@ -206,3 +290,8 @@ class PyParameter(PyVariable):
             f"<{self.__class__.__name__} {self.name!r}"
             f" spec={self.spec!r} type={self.type!r}>"
         )
+
+
+class PyTypeError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)

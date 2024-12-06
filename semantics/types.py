@@ -110,10 +110,23 @@ class PyType(ABC):
         """
         return None
 
+    def attr_scopes(self) -> Iterable[SymbolTable]:
+        """
+        Returns an iterable of all attribute scopes of the type in order of precedence.
+
+        The default implementation of `get_attr` and `attrs` uses this method to lookup
+        and iterate over the attributes of the type.
+        """
+        return ()
+
     def get_attr(self, name: str) -> Optional[Symbol]:
         """
         Finds an attribute of the type by name.
         """
+        for scope in self.attr_scopes():
+            if symbol := scope.get(name):
+                return symbol
+
         return None
 
     def attrs(self) -> Iterable[Symbol]:
@@ -129,10 +142,9 @@ class PyType(ABC):
     def _attrs(self) -> Iterable[Symbol]:
         """
         Returns an iterable of all attributes of the type.
-
-        This method should be overridden by subclasses.
         """
-        return ()
+        for scope in self.attr_scopes():
+            yield from scope.symbols()
 
     def get_return_type(self) -> "PyType":
         """
@@ -204,11 +216,8 @@ class PyModuleType(PyType):
     def entity(self) -> "PyEntity":
         return self.module
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
-        return self.module.context.global_scope.get(name)
-
-    def _attrs(self) -> Iterable[Symbol]:
-        yield from self.module.context.global_scope.symbols()
+    def attr_scopes(self) -> Iterable[SymbolTable]:
+        return (self.module.context.global_scope,)
 
 
 @final
@@ -229,12 +238,8 @@ class PyClassType(PyType):
     def entity(self) -> "PyEntity":
         return self.cls
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
-        # TODO: Look up in the class hierarchy.
-        return self.cls.scope.get(name)
-
-    def _attrs(self) -> Iterable[Symbol]:
-        yield from self.cls.scope.symbols()
+    def attr_scopes(self) -> Iterable[SymbolTable]:
+        return self.cls.mro_scopes()
 
     def get_return_type(self) -> PyType:
         return PyInstanceType(self.cls)
@@ -269,15 +274,8 @@ class PyInstanceType(PyType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyInstanceType) and self.cls is other.cls
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
-        # TODO: Look up in the class hierarchy.
-        if symbol := self.cls.instance_scope.get(name):
-            return symbol
-        return self.cls.scope.get(name)
-
-    def _attrs(self) -> Iterable[Symbol]:
-        yield from self.cls.instance_scope.symbols()
-        yield from self.cls.scope.symbols()
+    def attr_scopes(self) -> Iterable[SymbolTable]:
+        return self.cls.mro_scopes(instance=True)
 
     def get_return_type(self) -> PyType:
         return self.cls.get_method_return_type("__call__")
@@ -313,14 +311,10 @@ class PyFunctionType(PyType):
     def entity(self) -> "PyEntity":
         return self.func
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
+    def attr_scopes(self) -> Iterable[SymbolTable]:
         if function_cls := get_context_cls("types.FunctionType"):
-            return PyClassType(function_cls).get_attr(name)
-        return None
-
-    def _attrs(self) -> Iterable[Symbol]:
-        if function_cls := get_context_cls("types.FunctionType"):
-            yield from PyClassType(function_cls)._attrs()
+            return PyClassType(function_cls).attr_scopes()
+        return ()
 
     def get_return_type(self) -> PyType:
         return self.func.return_type or PyType.ANY
@@ -398,11 +392,8 @@ class PyLiteralType(PyType):
         """
         return PyInstanceType.from_builtin(LITERAL_TYPE_MAP[self.value_type])
 
-    def get_attr(self, name: str) -> Optional[Symbol]:
-        return self.get_base_type().get_attr(name)
-
-    def _attrs(self) -> Iterable[Symbol]:
-        return self.get_base_type()._attrs()
+    def attr_scopes(self) -> Iterable[SymbolTable]:
+        return self.get_base_type().attr_scopes()
 
     def get_annotated_type(self, context: "PythonContext") -> PyType:
         # None stands its own type in type annotations.

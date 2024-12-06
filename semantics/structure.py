@@ -9,7 +9,7 @@ from antlr4.tree.Tree import TerminalNode
 from grammar import PythonParser
 
 from .entity import PyEntity, PyVariable
-from .scope import ScopeType, SymbolTable
+from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TokenInfo, TokenKind
 from .types import PyInstanceType, PyType
@@ -117,12 +117,13 @@ class PythonContext:
         Returns:
             type: The type of the variable.
         """
-        if symbol := self.current_scope.lookup(name):
+        try:
+            symbol = self.current_scope.lookup(name, raise_from=node.getSymbol())
             self.set_node_info(node, symbol=symbol)
             return symbol.get_type()
 
-        else:
-            self.set_node_info(node, kind=TokenKind.IDENTIFIER)
+        except PySymbolNotFoundError as e:
+            self.errors.append(e)
             return PyType.ANY
 
     def set_variable_type(
@@ -179,6 +180,8 @@ class PythonContext:
             self.define_variable(
                 name, node, type=value_type, scope=on_type.cls.instance_scope
             )
+
+            # TODO: handle instance attributes.
 
         else:
             # The attribute cannot be defined on the type.
@@ -292,3 +295,24 @@ class PyParameterSpec:
     annotation: Optional[PythonParser.AnnotationContext] = None
     star_annotation: Optional[PythonParser.StarAnnotationContext] = None
     default: Optional[PythonParser.DefaultContext] = None
+
+
+@dataclasses.dataclass
+class PyArguments:
+    args: list["PyPositionalArgument"] = dataclasses.field(default_factory=list)
+    kwargs: list["PyKeywordArgument"] = dataclasses.field(default_factory=list)
+    double_stars: list["PyDoubleStarArgument"] = dataclasses.field(default_factory=list)
+
+
+class PyPositionalArgument(NamedTuple):
+    type: PyType
+    starred: bool = False
+
+
+class PyKeywordArgument(NamedTuple):
+    name: str
+    type: PyType
+
+
+class PyDoubleStarArgument(NamedTuple):
+    type: PyType

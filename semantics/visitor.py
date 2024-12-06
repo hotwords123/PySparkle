@@ -8,14 +8,18 @@ from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
 from .base import SemanticError
-from .entity import PyClass, PyFunction, PyLambda, PyParameter
+from .entity import PyClass, PyFunction, PyLambda, PyParameter, PyTypeError
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
+    PyArguments,
+    PyDoubleStarArgument,
     PyImportFrom,
     PyImportFromAsName,
     PyImportFromTargets,
     PyImportName,
+    PyKeywordArgument,
     PyParameterSpec,
+    PyPositionalArgument,
     PythonContext,
 )
 from .symbol import Symbol, SymbolType
@@ -419,6 +423,11 @@ class PythonVisitor(PythonParserVisitor):
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
+        if node := ctx.arguments():
+            arguments = self.visitArguments(node)
+        else:
+            arguments = PyArguments()
+
         if self.pass_num == 1:
             scope = self.context.new_scope(ctx, f"<class '{name}'>", ScopeType.CLASS)
             entity = PyClass(name, scope)
@@ -430,18 +439,27 @@ class PythonVisitor(PythonParserVisitor):
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
-        else:
+        elif self.pass_num == 2:
             scope = self.context.scope_of(ctx)
 
             entity: PyClass = self.context.entities[ctx]
-            entity.decorators = decorators
 
+            # Handle class decorators.
+            entity.decorators = decorators
             for decorator in decorators:
                 if modifier := _modifier_from_decorator(decorator, _CLASS_MODIFIERS):
                     entity.modifiers.add(modifier)
 
-        if arguments := ctx.arguments():
-            self.visitArguments(arguments)
+            # Handle class arguments.
+            entity.arguments = arguments
+            entity.bases.extend(
+                arg.type.cls
+                for arg in arguments.args
+                if not arg.starred and isinstance(arg.type, PyClassType)
+            )
+
+            with self.context.wrap_errors(PyTypeError):
+                entity.compute_mro()
 
         with self.context.scope_guard(scope):
             if type_params := ctx.typeParams():
@@ -913,23 +931,24 @@ class PythonVisitor(PythonParserVisitor):
 
             return self.context.access_attribute(type_, name, name_node)
 
+        elif slices := ctx.slices():
+            # Subscription
+            self.visitSlices(slices)
+
+            return type_.get_subscripted_type()
+
         elif genexp := ctx.genexp():
             # Function call with generator expression
             self.visitGenexp(genexp)
 
             return type_.get_return_type()
 
-        elif arguments := ctx.arguments():
+        else:
             # Function call
-            self.visitArguments(arguments)
+            if arguments := ctx.arguments():
+                self.visitArguments(arguments)
 
             return type_.get_return_type()
-
-        elif slices := ctx.slices():
-            # Subscription
-            self.visitSlices(slices)
-
-            return type_.get_subscripted_type()
 
     # atom
     #   : NAME
@@ -1311,6 +1330,121 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 2:
             return PyInstanceType.from_builtin("dict")
+
+    # arguments: args ','?;
+    @_type_check
+    @_visitor_guard
+    def visitArguments(self, ctx: PythonParser.ArgumentsContext) -> PyArguments:
+        return self.visitArgs(ctx.args())
+
+    # args
+    #   : arg (',' arg)* (',' kwargs)?
+    #   | kwargs;
+    @_type_check
+    @_visitor_guard
+    def visitArgs(self, ctx: PythonParser.ArgsContext) -> PyArguments:
+        arguments = PyArguments()
+
+        for node in ctx.arg():
+            arguments.args.append(self.visitArg(node))
+
+        if node := ctx.kwargs():
+            arguments = self.visitKwargs(node, arguments=arguments)
+
+        return arguments
+
+    # arg
+    #   : starredExpression
+    #   | assignmentExpression
+    #   | expression;
+    @_type_check
+    @_visitor_guard
+    def visitArg(self, ctx: PythonParser.ArgContext) -> PyPositionalArgument:
+        starred = False
+
+        if node := ctx.starredExpression():
+            type_ = self.visitStarredExpression(node)
+            starred = True
+
+        elif node := ctx.assignmentExpression():
+            type_ = self.visitAssignmentExpression(node)
+
+        elif node := ctx.expression():
+            type_ = self.visitExpression(node)
+
+        return PyPositionalArgument(type_, starred=starred)
+
+    # kwargs
+    #   : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
+    #   | kwargOrDoubleStarred (',' kwargOrDoubleStarred)*;
+    @_type_check
+    @_visitor_guard
+    def visitKwargs(
+        self,
+        ctx: PythonParser.KwargsContext,
+        *,
+        arguments: Optional[PyArguments] = None,
+    ) -> PyArguments:
+        if arguments is None:
+            arguments = PyArguments()
+
+        for node in ctx.kwargOrStarred():
+            arg = self.visitKwargOrStarred(node)
+            if isinstance(arg, PyKeywordArgument):
+                arguments.kwargs.append(arg)
+            else:
+                arguments.args.append(arg)
+
+        for node in ctx.kwargOrDoubleStarred():
+            arg = self.visitKwargOrDoubleStarred(node)
+            if isinstance(arg, PyKeywordArgument):
+                arguments.kwargs.append(arg)
+            else:
+                arguments.double_stars.append(arg)
+
+        return arguments
+
+    # starredExpression
+    #   : '*' expression;
+    @_type_check
+    @_visitor_guard
+    def visitStarredExpression(
+        self, ctx: PythonParser.StarredExpressionContext
+    ) -> PyType:
+        return self.visitExpression(ctx.expression())
+
+    # kwargOrStarred
+    #   : NAME '=' expression
+    #   | starredExpression;
+    @_type_check
+    @_visitor_guard
+    def visitKwargOrStarred(
+        self, ctx: PythonParser.KwargOrStarredContext
+    ) -> PyKeywordArgument | PyPositionalArgument:
+        if node := ctx.NAME():
+            name = self.visitName(node)
+            type_ = self.visitExpression(ctx.expression())
+            return PyKeywordArgument(name, type_)
+
+        elif node := ctx.starredExpression():
+            return self.visitStarredExpression(node)
+
+    # kwargOrDoubleStarred
+    #   : NAME '=' expression
+    #   | '**' expression;
+    @_type_check
+    @_visitor_guard
+    def visitKwargOrDoubleStarred(
+        self, ctx: PythonParser.KwargOrDoubleStarredContext
+    ) -> PyKeywordArgument | PyDoubleStarArgument:
+        type_ = self.visitExpression(ctx.expression())
+
+        if node := ctx.NAME():
+            name = self.visitName(node)
+            return PyKeywordArgument(name, type_)
+
+        else:
+            return PyDoubleStarArgument(type_)
 
     # starTargets: starTarget (',' starTarget)* ','?;
     @_type_check
