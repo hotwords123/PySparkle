@@ -545,6 +545,10 @@ class PythonVisitor(PythonParserVisitor):
             if self.pass_num == 1:
                 param.spec.star = "*"
 
+            elif self.pass_num == 2:
+                # TODO: respect original annotations.
+                param.type = PyInstanceType.from_builtin("tuple")
+
         elif node := ctx.paramNoDefaultStarAnnotation():
             parameters.append(param := self.visitParamNoDefaultStarAnnotation(node))
 
@@ -565,6 +569,10 @@ class PythonVisitor(PythonParserVisitor):
 
         if self.pass_num == 1:
             param.spec.star = "**"
+
+        elif self.pass_num == 2:
+            # TODO: respect original annotations.
+            param.type = PyInstanceType.from_builtin("dict")
 
         return param
 
@@ -892,25 +900,188 @@ class PythonVisitor(PythonParserVisitor):
             if parameters := ctx.lambdaParameters():
                 self.visitLambdaParameters(parameters)
 
-            self.visitExpression(ctx.expression())
+            type_ = self.visitExpression(ctx.expression())
+            if self.pass_num == 2:
+                type_: PyType
+                entity.return_type = type_.get_inferred_type()
 
         if self.pass_num == 2:
             return entity.get_type()
 
+    # lambdaParameters
+    #   : lambdaSlashNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)*
+    #       (',' lambdaStarEtc?)?
+    #   | lambdaSlashWithDefault (',' lambdaParamWithDefault)*
+    #       (',' lambdaStarEtc?)?
+    #   | lambdaParamNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)*
+    #       (',' lambdaStarEtc?)?
+    #   | lambdaParamWithDefault (',' lambdaParamWithDefault)*
+    #       (',' lambdaStarEtc?)?
+    #   | lambdaStarEtc;
+    @_visitor_guard
+    def visitLambdaParameters(
+        self, ctx: PythonParser.LambdaParametersContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        if node := ctx.lambdaSlashNoDefault():
+            parameters.extend(self.visitLambdaSlashNoDefault(node))
+
+        elif node := ctx.lambdaSlashWithDefault():
+            parameters.extend(self.visitLambdaSlashWithDefault(node))
+
+        for node in ctx.lambdaParamNoDefault():
+            parameters.append(self.visitLambdaParamNoDefault(node))
+
+        for node in ctx.lambdaParamWithDefault():
+            parameters.append(self.visitLambdaParamWithDefault(node))
+
+        if node := ctx.lambdaStarEtc():
+            parameters.extend(self.visitLambdaStarEtc(node))
+
+        return parameters
+
+    # lambdaSlashNoDefault
+    #   : lambdaParamNoDefault (',' lambdaParamNoDefault)* ',' '/';
+    @_visitor_guard
+    def visitLambdaSlashNoDefault(
+        self, ctx: PythonParser.LambdaSlashNoDefaultContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        for node in ctx.lambdaParamNoDefault():
+            parameters.append(self.visitLambdaParamNoDefault(node))
+
+        if self.pass_num == 1:
+            for param in parameters:
+                param.spec.posonly = True
+
+        return parameters
+
+    # lambdaSlashWithDefault
+    #   : lambdaParamNoDefault (',' lambdaParamNoDefault)* (',' lambdaParamWithDefault)+ ',' '/'
+    #   | lambdaParamWithDefault (',' lambdaParamWithDefault)* ',' '/';
+    @_visitor_guard
+    def visitLambdaSlashWithDefault(
+        self, ctx: PythonParser.LambdaSlashWithDefaultContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        for node in ctx.lambdaParamNoDefault():
+            parameters.append(self.visitLambdaParamNoDefault(node))
+
+        for node in ctx.lambdaParamWithDefault():
+            parameters.append(self.visitLambdaParamWithDefault(node))
+
+        if self.pass_num == 1:
+            for param in parameters:
+                param.spec.posonly = True
+
+        return parameters
+
+    # lambdaStarEtc
+    #   : '*' lambdaParamNoDefault (',' lambdaParamMaybeDefault)* (',' lambdaKwds?)?
+    #   | '*' (',' lambdaParamMaybeDefault)+ (',' lambdaKwds?)?
+    #   | lambdaKwds;
+    @_visitor_guard
+    def visitLambdaStarEtc(
+        self, ctx: PythonParser.LambdaStarEtcContext
+    ) -> list[PyParameter]:
+        parameters: list[PyParameter] = []
+
+        if node := ctx.lambdaParamNoDefault():
+            parameters.append(param := self.visitLambdaParamNoDefault(node))
+
+            if self.pass_num == 1:
+                param.spec.star = "*"
+
+            elif self.pass_num == 2:
+                param.type = PyInstanceType.from_builtin("tuple")
+
+        for node in ctx.lambdaParamMaybeDefault():
+            parameters.append(param := self.visitLambdaParamMaybeDefault(node))
+
+            if self.pass_num == 1:
+                param.spec.kwonly = True
+
+        if node := ctx.lambdaKwds():
+            parameters.append(self.visitLambdaKwds(node))
+
+        return parameters
+
+    # lambdaKwds: '**' lambdaParamNoDefault ','?;
+    def visitLambdaKwds(self, ctx: PythonParser.LambdaKwdsContext) -> PyParameter:
+        param = self.visitLambdaParamNoDefault(ctx.lambdaParamNoDefault())
+
+        if self.pass_num == 1:
+            param.spec.star = "**"
+
+        elif self.pass_num == 2:
+            param.type = PyInstanceType.from_builtin("dict")
+
+        return param
+
+    # lambdaParamNoDefault: lambdaParam;
+    def visitLambdaParamNoDefault(
+        self, ctx: PythonParser.LambdaParamNoDefaultContext
+    ) -> PyParameter:
+        return self.visitLambdaParam(ctx.lambdaParam())
+
+    # lambdaParamWithDefault: lambdaParam default;
+    def visitLambdaParamWithDefault(
+        self, ctx: PythonParser.LambdaParamWithDefaultContext
+    ) -> PyParameter:
+        param = self.visitLambdaParam(ctx.lambdaParam())
+
+        default = self.visitDefault(ctx.default())
+
+        if self.pass_num == 1:
+            param.spec.default = ctx.default()
+
+        elif self.pass_num == 2:
+            param.type = default.get_inferred_type()
+
+        return param
+
+    # lambdaParamMaybeDefault: lambdaParam default?;
+    def visitLambdaParamMaybeDefault(
+        self, ctx: PythonParser.LambdaParamMaybeDefaultContext
+    ) -> PyParameter:
+        param = self.visitLambdaParam(ctx.lambdaParam())
+
+        if default_node := ctx.default():
+            default = self.visitDefault(default_node)
+
+            if self.pass_num == 1:
+                param.spec.default = default_node
+
+            elif self.pass_num == 2:
+                param.type = default.get_inferred_type()
+
+        return param
+
     # lambdaParam: NAME;
     @_visitor_guard
-    def visitLambdaParam(self, ctx: PythonParser.LambdaParamContext):
+    def visitLambdaParam(self, ctx: PythonParser.LambdaParamContext) -> PyParameter:
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            symbol = Symbol(SymbolType.PARAMETER, name, name_node)
+            param = PyParameter(name, PyParameterSpec())
+            self.context.entities[ctx] = param
+
+            symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
             self.context.set_node_info(
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
             with self.context.wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
+
+        else:
+            param = self.context.entities[ctx]
+
+        return param
 
     # string: STRING_LITERAL | BYTES_LITERAL;
     # strings: string+;

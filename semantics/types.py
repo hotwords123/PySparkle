@@ -199,6 +199,9 @@ class PyInstanceType(PyType):
         self.cls = cls
 
     def __str__(self) -> str:
+        if self.cls is get_context_cls("types.NoneType"):
+            return "None"
+
         return self.cls.name
 
     def get_attr(self, name: str) -> Optional[Symbol]:
