@@ -162,7 +162,8 @@ class PythonVisitor(PythonParserVisitor):
         elif self.pass_num == 2:
             annotation: PyType
             self.visitSingleTarget(
-                ctx.singleTarget(), value_type=annotation.get_annotation_type()
+                ctx.singleTarget(),
+                value_type=annotation.get_annotated_type(self.context),
             )
 
     # (starTargets '=')+ assignmentRhs
@@ -446,7 +447,11 @@ class PythonVisitor(PythonParserVisitor):
             entity.decorators = decorators
 
         if expression := ctx.expression():
-            self.visitExpression(expression)
+            annotation = self.visitExpression(expression)
+
+            if self.pass_num == 2:
+                annotation: PyType
+                entity.return_type = annotation.get_annotated_type(self.context)
 
         with self.context.scope_guard(scope):
             if type_params := ctx.typeParams():
@@ -681,7 +686,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitAnnotation(self, ctx: PythonParser.AnnotationContext) -> PyType:
         annotation: PyType = self.visitExpression(ctx.expression())
-        return annotation.get_annotation_type()
+        return annotation.get_annotated_type(self.context)
 
     # starAnnotation: ':' starExpression;
     @_type_check

@@ -1,3 +1,13 @@
+"""
+This module defines the types used in the type system of the Python semantic analyzer.
+
+References
+- https://peps.python.org/pep-0483/
+- https://peps.python.org/pep-0484/
+- https://docs.python.org/3/library/typing.html
+- https://docs.python.org/3/library/types.html
+"""
+
 import threading
 from contextlib import contextmanager
 from types import EllipsisType, NoneType
@@ -8,6 +18,7 @@ from .symbol import Symbol, SymbolType
 
 if TYPE_CHECKING:
     from .entity import PyClass, PyFunction, PyModule
+    from .structure import PythonContext
 
 
 class _TypeContext(threading.local):
@@ -108,9 +119,15 @@ class PyType:
         """
         return PyType.ANY
 
-    def get_annotation_type(self) -> "PyType":
+    def get_annotated_type(self, context: "PythonContext") -> "PyType":
         """
         Returns the type of the annotation.
+
+        This is used for type annotations, e.g. determining the type of a variable from
+        its annotation.
+
+        Args:
+            context: The context in which the annotation is used.
         """
         return PyType.ANY
 
@@ -149,7 +166,7 @@ class PyClassType(PyType):
         self.cls = cls
 
     def __str__(self) -> str:
-        return f"type[{self.cls.name}]"
+        return f"<class {self.cls.name!r}>"
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} class={self.cls!r}>"
@@ -167,7 +184,7 @@ class PyClassType(PyType):
     def get_subscripted_type(self) -> PyType:
         return self.cls.get_method_return_type("__class_getitem__")
 
-    def get_annotation_type(self) -> PyType:
+    def get_annotated_type(self, context: "PythonContext") -> PyType:
         return self.cls.get_instance_type()
 
     @staticmethod
@@ -308,10 +325,16 @@ class PyLiteralType(PyType):
     def _attrs(self) -> Iterable[Symbol]:
         return self.get_base_type()._attrs()
 
-    def get_annotation_type(self) -> PyType:
+    def get_annotated_type(self, context: "PythonContext") -> PyType:
         # None stands its own type in type annotations.
         if self.value is None:
             return PyInstanceType.from_builtin("types.NoneType")
+
+        # String literals can represent forward references.
+        if self.value_type is str:
+            # TODO: Parse the string literal as tree and resolve the type.
+            if symbol := context.current_scope.lookup(self.value):
+                return symbol.get_type().get_annotated_type(context)
 
         # Other literals cannot be directly used for type annotations.
         return PyType.ANY
