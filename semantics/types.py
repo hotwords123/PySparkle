@@ -12,7 +12,7 @@ import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from types import EllipsisType, NoneType
-from typing import TYPE_CHECKING, Iterable, Optional, final
+from typing import TYPE_CHECKING, Iterator, Optional, final
 
 from .scope import SymbolTable
 from .symbol import Symbol
@@ -110,14 +110,14 @@ class PyType(ABC):
         """
         return None
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         """
-        Returns an iterable of all attribute scopes of the type in order of precedence.
+        Yields the attribute scopes of the type in order of precedence.
 
         The default implementation of `get_attr` and `attrs` uses this method to lookup
         and iterate over the attributes of the type.
         """
-        return ()
+        return iter(())
 
     def get_attr(self, name: str) -> Optional[Symbol]:
         """
@@ -129,9 +129,9 @@ class PyType(ABC):
 
         return None
 
-    def attrs(self) -> Iterable[Symbol]:
+    def attrs(self) -> Iterator[Symbol]:
         """
-        Returns an iterable of all attributes of the type, removing duplicates.
+        Yields the attributes of the type, removing duplicates.
         """
         visited: set[str] = set()
         for symbol in self._attrs():
@@ -139,12 +139,12 @@ class PyType(ABC):
                 visited.add(symbol.name)
                 yield symbol
 
-    def _attrs(self) -> Iterable[Symbol]:
+    def _attrs(self) -> Iterator[Symbol]:
         """
-        Returns an iterable of all attributes of the type.
+        Yields the attributes of the type, possibly with duplicates.
         """
         for scope in self.attr_scopes():
-            yield from scope.symbols()
+            yield from scope.iter_symbols()
 
     def get_return_type(self) -> "PyType":
         """
@@ -216,7 +216,7 @@ class PyModuleType(PyType):
     def entity(self) -> "PyEntity":
         return self.module
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         yield self.module.context.global_scope
 
         if module_cls := get_stub_class("types.ModuleType"):
@@ -241,7 +241,7 @@ class PyClassType(PyType):
     def entity(self) -> "PyEntity":
         return self.cls
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         return self.cls.mro_scopes()
 
     def get_return_type(self) -> PyType:
@@ -276,7 +276,7 @@ class PyInstanceType(PyType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyInstanceType) and self.cls is other.cls
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         return self.cls.mro_scopes(instance=True)
 
     def get_return_type(self) -> PyType:
@@ -325,10 +325,10 @@ class PyFunctionType(PyType):
     def entity(self) -> "PyEntity":
         return self.func
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         if function_cls := get_stub_class("types.FunctionType"):
             return PyClassType(function_cls).attr_scopes()
-        return ()
+        return iter(())
 
     def get_return_type(self) -> PyType:
         return self.func.return_type or PyType.ANY
@@ -406,7 +406,7 @@ class PyLiteralType(PyType):
         """
         return PyInstanceType.from_stub(LITERAL_TYPE_MAP[self.value_type])
 
-    def attr_scopes(self) -> Iterable[SymbolTable]:
+    def attr_scopes(self) -> Iterator[SymbolTable]:
         return self.get_base_type().attr_scopes()
 
     def get_annotated_type(self, context: "PythonContext") -> PyType:

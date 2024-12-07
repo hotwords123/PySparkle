@@ -157,7 +157,7 @@ class PythonAnalyzer:
 
         else:
             # Import all public symbols from the module.
-            for target_symbol in imported_scope.symbols(public_only=True):
+            for target_symbol in imported_scope.iter_symbols(public_only=True):
                 symbol = Symbol(
                     SymbolType.IMPORTED, target_symbol.name, target=target_symbol
                 )
@@ -197,7 +197,9 @@ class PythonAnalyzer:
         """
         builtins_module = self.importer.import_module("builtins")
 
-        for symbol in builtins_module.context.global_scope.symbols(public_only=True):
+        for symbol in builtins_module.context.global_scope.iter_symbols(
+            public_only=True
+        ):
             self.builtin_scope.define(
                 symbol.copy(node=None, public=None, target=symbol)
             )
@@ -209,7 +211,7 @@ class PythonAnalyzer:
         with self.set_type_context():
             module_cls = get_stub_class("types.ModuleType")
             assert module_cls is not None, "types.ModuleType not found"
-            for symbol in module_cls.scope.symbols():
+            for symbol in module_cls.scope.iter_symbols():
                 self.builtin_scope.define(
                     symbol.copy(node=None, public=None, target=symbol)
                 )

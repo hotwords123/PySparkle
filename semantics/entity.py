@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Optional, Literal
+from typing import TYPE_CHECKING, Iterator, Literal, Optional
 
 from .scope import ScopeType, SymbolTable
 from .types import (
@@ -130,7 +130,7 @@ class PyClass(_ModifiersMixin, PyEntity):
     def get_self_type(self) -> PySelfType:
         return PySelfType(self)
 
-    def mro_scopes(self, instance: bool = False) -> Iterable[SymbolTable]:
+    def mro_scopes(self, instance: bool = False) -> Iterator[SymbolTable]:
         """
         Yields the scopes of the class and its bases in MRO order.
 
