@@ -442,7 +442,6 @@ class PyLiteralType(PyInstanceBase):
         return PyType.ANY
 
     def get_inferred_type(self) -> PyType:
-        # TODO: Handle compound literals.
         return self.get_cls().get_instance_type()
 
 

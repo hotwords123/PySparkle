@@ -1536,11 +1536,13 @@ class PythonVisitor(PythonParserVisitor):
             # Check if there is a starred expression in the targets.
             star_index: Optional[int] = None
             for i, star_target in enumerate(ctx.starTarget()):
-                if star := star_target.STAR():
+                if star_target.STAR():
                     if star_index is not None:
                         self.context.errors.append(
                             SemanticError(
-                                "multiple starred expressions in assignment", star
+                                "multiple starred expressions in assignment",
+                                star_target.start,
+                                star_target.stop,
                             )
                         )
                     else:
@@ -1558,7 +1560,18 @@ class PythonVisitor(PythonParserVisitor):
 
         else:
             # Otherwise, the value is directly assigned to the single target.
-            self.visitStarTarget(ctx.starTarget(0), value_type=value_type)
+            star_target = ctx.starTarget(0)
+            self.check_invalid_star(star_target)
+            self.visitStarTarget(star_target, value_type=value_type)
+
+    def check_invalid_star(self, ctx: PythonParser.StarTargetContext):
+        """
+        Helper method to check for invalid starred expressions in assignment targets.
+        """
+        if ctx.STAR():
+            self.context.errors.append(
+                SemanticError("cannot use starred expression here", ctx.start, ctx.stop)
+            )
 
     def handle_star_targets_unpacked(
         self,
@@ -1663,7 +1676,8 @@ class PythonVisitor(PythonParserVisitor):
         *,
         value_type: PyType = PyType.ANY,
     ):
-        # TODO: handle the star
+        # NOTE: The star is handled in parent context (`starTargets`, `starAtom` or
+        # `withItem`).
         self.visitTargetWithStarAtom(ctx.targetWithStarAtom(), value_type=value_type)
 
     # targetWithStarAtom
@@ -1716,6 +1730,9 @@ class PythonVisitor(PythonParserVisitor):
                 self.context.set_variable_type(symbol, value_type.get_inferred_type())
 
         elif star_target := ctx.starTarget():
+            if self.pass_num == 2:
+                self.check_invalid_star(star_target)
+
             return self.visitStarTarget(star_target, value_type=value_type)
 
         elif star_targets := ctx.starTargets():
