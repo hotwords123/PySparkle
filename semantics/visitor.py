@@ -525,7 +525,7 @@ class PythonVisitor(PythonParserVisitor):
                 annotation: PyType
                 entity.return_type = annotation.get_annotated_type(self.context)
 
-        with self.context.scope_guard(scope):
+        with self.context.set_parent_function(entity):
             if type_params := ctx.typeParams():
                 self.visitTypeParams(type_params)
 
@@ -551,6 +551,7 @@ class PythonVisitor(PythonParserVisitor):
                             # Instance methods have a `self` parameter.
                             first_param.type = entity.cls.get_self_type()
 
+        with self.context.scope_guard(scope):
             self.visitBlock(ctx.block())
 
     # parameters
@@ -732,14 +733,13 @@ class PythonVisitor(PythonParserVisitor):
             )
 
             with self.context.wrap_errors(PyDuplicateSymbolError):
-                self.context.current_scope.define(symbol)
+                self.context.parent_function.scope.define(symbol)
 
         else:
             param: PyParameter = self.context.entities[ctx]
 
         if annotation_node:
-            with self.context.scope_guard(self.context.parent_scope):
-                annotation = self.visitAnnotation(annotation_node)
+            annotation = self.visitAnnotation(annotation_node)
 
             if self.pass_num == 2:
                 param.type = annotation
@@ -765,13 +765,12 @@ class PythonVisitor(PythonParserVisitor):
             )
 
             with self.context.wrap_errors(PyDuplicateSymbolError):
-                self.context.current_scope.define(symbol)
+                self.context.parent_function.scope.define(symbol)
 
         else:
             param = self.context.entities[ctx]
 
-        with self.context.scope_guard(self.context.parent_scope):
-            annotation = self.visitStarAnnotation(annotation_node)
+        annotation = self.visitStarAnnotation(annotation_node)
 
         if self.pass_num == 2:
             param.type = annotation
@@ -793,10 +792,10 @@ class PythonVisitor(PythonParserVisitor):
         return PyType.ANY  # TODO: star-annotated parameters
 
     # default: '=' expression;
+    @_type_check
     @_visitor_guard
-    def visitDefault(self, ctx: PythonParser.DefaultContext) -> Optional[PyType]:
-        with self.context.scope_guard(self.context.parent_scope):
-            return self.visitExpression(ctx.expression())
+    def visitDefault(self, ctx: PythonParser.DefaultContext) -> PyType:
+        return self.visitExpression(ctx.expression())
 
     # exceptBlock
     #   : 'except' (expression ('as' NAME)?)? ':' block;
@@ -1008,14 +1007,16 @@ class PythonVisitor(PythonParserVisitor):
 
         elif genexp := ctx.genexp():
             # Function call with generator expression
-            self.visitGenexp(genexp)
+            with self.context.set_called_function(type_):
+                self.visitGenexp(genexp)
 
             return type_.get_return_type()
 
         else:
             # Function call
             if arguments := ctx.arguments():
-                self.visitArguments(arguments)
+                with self.context.set_called_function(type_):
+                    self.visitArguments(arguments)
 
             return type_.get_return_type()
 
@@ -1055,20 +1056,19 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
             entity: PyLambda = self.context.entities[ctx]
 
-        with self.context.scope_guard(scope):
+        with self.context.set_parent_function(entity):
             if node := ctx.lambdaParameters():
                 parameters = self.visitLambdaParameters(node)
 
+                if self.pass_num == 1:
+                    entity.parameters.extend(parameters)
+
+        with self.context.scope_guard(scope):
             type_ = self.visitExpression(ctx.expression())
 
-            if self.pass_num == 1:
-                entity.parameters.extend(parameters)
-
-            elif self.pass_num == 2:
-                type_: PyType
-                entity.return_type = type_.get_inferred_type()
-
         if self.pass_num == 2:
+            type_: PyType
+            entity.return_type = type_.get_inferred_type()
             return entity.get_type()
 
     # lambdaParameters
@@ -1239,7 +1239,7 @@ class PythonVisitor(PythonParserVisitor):
             )
 
             with self.context.wrap_errors(PyDuplicateSymbolError):
-                self.context.current_scope.define(symbol)
+                self.context.parent_function.scope.define(symbol)
 
         else:
             param = self.context.entities[ctx]
@@ -1490,6 +1490,8 @@ class PythonVisitor(PythonParserVisitor):
     ) -> PyKeywordArgument | PyType:
         if node := ctx.NAME():
             name = self.visitName(node)
+            self.context.access_func_kwarg(name, node)
+
             type_ = self.visitExpression(ctx.expression())
             return PyKeywordArgument(name, type_)
 
@@ -1504,14 +1506,15 @@ class PythonVisitor(PythonParserVisitor):
     def visitKwargOrDoubleStarred(
         self, ctx: PythonParser.KwargOrDoubleStarredContext
     ) -> PyKeywordArgument | PyType:
-        type_ = self.visitExpression(ctx.expression())
-
         if node := ctx.NAME():
             name = self.visitName(node)
+            self.context.access_func_kwarg(name, node)
+
+            type_ = self.visitExpression(ctx.expression())
             return PyKeywordArgument(name, type_)
 
         else:
-            return type_
+            return self.visitExpression(ctx.expression())
 
     # starTargets: starTarget (',' starTarget)* ','?;
     @_type_check

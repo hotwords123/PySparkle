@@ -6,11 +6,11 @@ from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
-from .entity import PyEntity, PyVariable
+from .entity import PyEntity, PyFunction, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TokenInfo, TokenKind
-from .types import PySelfType, PyType
+from .types import PyClassType, PyFunctionType, PySelfType, PyType
 
 
 class PythonContext:
@@ -22,6 +22,11 @@ class PythonContext:
         self.global_scope: SymbolTable = global_scope
         self.current_scope: SymbolTable = global_scope
         self.scopes: dict[ParserRuleContext, SymbolTable] = {}
+
+        # Used when analyzing parameter specifications.
+        self.parent_function: Optional[PyFunction] = None
+        # Used when analyzing function calls.
+        self.called_function: Optional[PyFunction] = None
 
         self.imports: list[PyImport] = []
 
@@ -203,6 +208,68 @@ class PythonContext:
         else:
             self.set_node_info(node, kind=TokenKind.FIELD)
             return PyType.ANY
+
+    @contextmanager
+    def set_parent_function(self, func: PyFunction) -> Iterator[None]:
+        old_function = self.parent_function
+        self.parent_function = func
+        try:
+            yield
+        finally:
+            self.parent_function = old_function
+
+    @contextmanager
+    def set_called_function(self, type: PyType) -> Iterator[None]:
+        # TODO: This logic should be implemented in the `types` module.
+        if isinstance(type, PyFunctionType):
+            func = type.func
+        elif isinstance(type, PyClassType):
+            func = type.cls.lookup_method("__init__")
+        else:
+            func = None
+
+        old_function = self.called_function
+        self.called_function = func
+        try:
+            yield
+        finally:
+            self.called_function = old_function
+
+    def access_func_kwarg(self, name: str, node: TerminalNode) -> PyType:
+        """
+        Accesses a keyword parameter in the called function.
+
+        Args:
+            name: The name of the keyword parameter.
+            node: The terminal node where the keyword parameter is accessed.
+
+        Returns:
+            type: The type of the keyword parameter.
+        """
+        if self.called_function is not None:
+            kwargs_symbol: Optional[Symbol] = None
+
+            for param in self.called_function.parameters:
+                if not param.posonly and param.star is None and param.name == name:
+                    # There is a keyword parameter by the name.
+                    symbol = self.called_function.scope[param.name]
+                    self.set_node_info(node, symbol=symbol)
+                    return symbol.get_type()
+
+                elif param.star == "**":
+                    # There is a double-star parameter. Remember it in case the keyword
+                    # parameter is not found.
+                    kwargs_symbol = self.called_function.scope[param.name]
+
+            if kwargs_symbol is not None:
+                # The argument is passed to the double-star parameter.
+                self.set_node_info(node, symbol=kwargs_symbol)
+                # TODO: Check the type of the kwargs symbol.
+                return PyType.ANY
+
+        # The keyword parameter is not found.
+        self.set_node_info(node, kind=TokenKind.VARIABLE)
+        return PyType.ANY
 
 
 @dataclasses.dataclass
