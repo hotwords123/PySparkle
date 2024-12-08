@@ -380,7 +380,7 @@ class PyFunctionType(PyInstanceBase):
 @final
 class PyNoneType(PyInstanceBase):
     def __str__(self) -> str:
-        return "NoneType"
+        return "None"
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyNoneType)
@@ -446,7 +446,6 @@ class PyLiteralType(PyInstanceBase):
         return self.get_cls().get_instance_type()
 
 
-@final
 class PyTupleType(PyInstanceBase):
     def __init__(self, types: Iterable[PyType]):
         """
@@ -541,3 +540,19 @@ class PyUnpack(PyType):
             return self.inner.types
 
         return None
+
+
+@final
+class PyPackedTuple(PyTupleType):
+    """
+    Helper type for star targets in assignment. Represents an intermediate tuple type
+    generated for a starred target. Will be converted to a list when actually assigned
+    to the target.
+    """
+
+    def to_list_type(self) -> PyType:
+        """
+        Converts the packed tuple to a list type.
+        """
+        # TODO: Return a generic list of the union of all types once implemented.
+        return PyInstanceType.from_stub("builtins.list")

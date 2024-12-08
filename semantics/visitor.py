@@ -27,6 +27,7 @@ from .types import (
     PyInstanceType,
     PyLiteralType,
     PyNoneType,
+    PyPackedTuple,
     PyTupleType,
     PyType,
     PyUnpack,
@@ -845,16 +846,18 @@ class PythonVisitor(PythonParserVisitor):
         if ctx.COMMA():
             # If at least one comma is present, the result is a tuple.
             return PyTupleType.from_starred(
-                self.visitStarExpression(expr) for expr in ctx.starExpression()
+                [self.visitStarExpression(node) for node in ctx.starExpression()]
             )
 
         else:
             # Otherwise, the result is the type of the single expression. Note that the
             # expression must not be a starred expression in this case.
-            type_ = self.visitStarExpression(ctx.starExpression(0))
+            type_ = self.visitStarExpression(node := ctx.starExpression(0))
             if isinstance(type_, PyUnpack):
                 self.context.errors.append(
-                    SemanticError("Starred expressions are not allowed here")
+                    SemanticError("Starred expressions are not allowed here"),
+                    node.start,
+                    node.stop,
                 )
                 return PyType.ANY
 
@@ -1517,11 +1520,139 @@ class PythonVisitor(PythonParserVisitor):
         self,
         ctx: PythonParser.StarTargetsContext,
         *,
-        value_type: Optional[PyType] = None,
+        value_type: PyType = PyType.ANY,
+        always_unpack: bool = False,
     ):
-        for star_target in ctx.starTarget():
-            # TODO: handle multiple targets
-            self.visitStarTarget(star_target, value_type=value_type)
+        """
+        Args:
+            value_type: The type of the value assigned to the targets.
+            always_unpack: Whether the value is always unpacked before assigned to the
+                targets. Set to `True` if the targets are wrapped in square brackets.
+        """
+        if always_unpack or ctx.COMMA():
+            # If the targets are wrapped in square brackets, or if at least one comma
+            # is present, the value is unpacked before assigned to the targets.
+
+            # Check if there is a starred expression in the targets.
+            star_index: Optional[int] = None
+            for i, star_target in enumerate(ctx.starTarget()):
+                if star := star_target.STAR():
+                    if star_index is not None:
+                        self.context.errors.append(
+                            SemanticError(
+                                "multiple starred expressions in assignment", star
+                            )
+                        )
+                    else:
+                        star_index = i
+
+            # Try to determine the types of the unpacked values.
+            if (
+                unpacked_types := PyUnpack(value_type).get_unpacked_types()
+            ) is not None:
+                self.handle_star_targets_unpacked(ctx, star_index, unpacked_types)
+
+            else:
+                # TODO: Also check if the value to unpack is an iterable.
+                self.handle_star_targets_any(ctx, star_index)
+
+        else:
+            # Otherwise, the value is directly assigned to the single target.
+            self.visitStarTarget(ctx.starTarget(0), value_type=value_type)
+
+    def handle_star_targets_unpacked(
+        self,
+        ctx: PythonParser.StarTargetsContext,
+        star_index: Optional[int],
+        unpacked_types: tuple[PyType],
+    ):
+        """
+        Helper method to handle the assignment of unpacked values to starred targets.
+        """
+        num_targets, num_unpacked = len(ctx.starTarget()), len(unpacked_types)
+
+        # Check if the number of unpacked values matches the number of targets.
+        if star_index is not None:
+            num_targets -= 1  # Exclude the starred target
+            if (num_starred := num_unpacked - num_targets) < 0:
+                self.context.errors.append(
+                    SemanticError(
+                        f"not enough values to unpack (expected at least "
+                        f"{num_targets}, got {num_unpacked})",
+                        ctx.start,
+                        ctx.stop,
+                    )
+                )
+                num_starred = 0
+        else:
+            if num_unpacked < num_targets:
+                self.context.errors.append(
+                    SemanticError(
+                        f"not enough values to unpack (expected {num_targets}, "
+                        f"got {num_unpacked})",
+                        ctx.start,
+                        ctx.stop,
+                    )
+                )
+            elif num_unpacked > num_targets:
+                self.context.errors.append(
+                    SemanticError(
+                        f"too many values to unpack (expected {num_targets}, "
+                        f"got {num_unpacked})",
+                        ctx.start,
+                        ctx.stop,
+                    )
+                )
+
+        # Which of the unpacked items is assigned to the target?
+        src_index = 0
+
+        # Assign the unpacked types to the targets.
+        for i, star_target in enumerate(ctx.starTarget()):
+            if star_index is not None and i == star_index:
+                value_types = unpacked_types[src_index : src_index + num_starred]
+                src_index += num_starred
+
+                # The starred target receives a list of the remaining values. However,
+                # we pass the types as a "packed tuple" to handle nested starred
+                # expressions. The tuple is finally converted to a list in the target.
+                self.visitStarTarget(star_target, value_type=PyPackedTuple(value_types))
+
+            else:
+                try:
+                    value_type = unpacked_types[src_index]
+                except IndexError:
+                    value_type = PyType.ANY
+                src_index += 1
+
+                self.visitStarTarget(star_target, value_type=value_type)
+
+    def handle_star_targets_any(
+        self, ctx: PythonParser.StarTargetsContext, star_index: Optional[int]
+    ):
+        """
+        Helper method to handle the assignment of Any to starred targets.
+        """
+        for i, star_target in enumerate(ctx.starTarget()):
+            if star_index is not None and i == star_index:
+                # The starred target receives a list of the remaining values.
+                self.visitStarTarget(
+                    star_target, value_type=PyInstanceType.from_stub("builtins.list")
+                )
+            else:
+                # We do not know the type of other targets.
+                self.visitStarTarget(star_target, value_type=PyType.ANY)
+
+    @staticmethod
+    def convert_packed_tuple(value_type: PyType) -> PyType:
+        """
+        Helper method to convert a packed tuple type to a list type. If the type is not
+        a packed tuple, it is returned as is.
+        """
+        if isinstance(value_type, PyPackedTuple):
+            return value_type.to_list_type()
+        else:
+            return value_type
 
     # starTarget: '*'? targetWithStarAtom;
     @_type_check
@@ -1530,7 +1661,7 @@ class PythonVisitor(PythonParserVisitor):
         self,
         ctx: PythonParser.StarTargetContext,
         *,
-        value_type: Optional[PyType] = None,
+        value_type: PyType = PyType.ANY,
     ):
         # TODO: handle the star
         self.visitTargetWithStarAtom(ctx.targetWithStarAtom(), value_type=value_type)
@@ -1545,12 +1676,13 @@ class PythonVisitor(PythonParserVisitor):
         self,
         ctx: PythonParser.TargetWithStarAtomContext,
         *,
-        value_type: Optional[PyType] = None,
+        value_type: PyType = PyType.ANY,
     ):
         if star_atom := ctx.starAtom():
             return self.visitStarAtom(star_atom, value_type=value_type)
 
         type_ = self.visitPrimary(ctx.primary())
+        value_type = self.convert_packed_tuple(value_type)
 
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
@@ -1569,7 +1701,7 @@ class PythonVisitor(PythonParserVisitor):
     #   | '[' starTargets? ']';
     @_visitor_guard
     def visitStarAtom(
-        self, ctx: PythonParser.StarAtomContext, *, value_type: Optional[PyType] = None
+        self, ctx: PythonParser.StarAtomContext, *, value_type: PyType = PyType.ANY
     ):
         if name_node := ctx.NAME():
             name = self.visitName(name_node)
@@ -1578,17 +1710,20 @@ class PythonVisitor(PythonParserVisitor):
                 self.context.define_variable(name, name_node)
 
             elif self.pass_num == 2:
-                if value_type is not None:
-                    symbol = self.context.current_scope[name]
-                    self.context.set_variable_type(
-                        symbol, value_type.get_inferred_type()
-                    )
+                value_type = self.convert_packed_tuple(value_type)
+
+                symbol = self.context.current_scope[name]
+                self.context.set_variable_type(symbol, value_type.get_inferred_type())
 
         elif star_target := ctx.starTarget():
             return self.visitStarTarget(star_target, value_type=value_type)
 
         elif star_targets := ctx.starTargets():
-            return self.visitStarTargets(star_targets, value_type=value_type)
+            return self.visitStarTargets(
+                star_targets,
+                value_type=value_type,
+                always_unpack=ctx.LSQB() is not None,
+            )
 
     # singleTarget
     #   : singleSubscriptAttributeTarget
@@ -1649,11 +1784,13 @@ class PythonVisitor(PythonParserVisitor):
             name = self.visitName(name_node)
 
             if value_type is not None:
+                # Normal assignment
                 self.context.define_attribute(
                     type_, name, name_node, value_type=value_type
                 )
 
             else:
+                # Augmented assignment
                 self.context.access_attribute(type_, name, name_node)
 
         elif slices := ctx.slices():
