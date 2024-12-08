@@ -11,10 +11,9 @@ References
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from types import EllipsisType, NoneType
-from typing import TYPE_CHECKING, Iterator, Optional, final
+from typing import TYPE_CHECKING, Iterator, Literal, Optional, final, overload
 
-from .scope import SymbolTable
+from .scope import ScopeType, SymbolTable
 from .symbol import Symbol
 
 if TYPE_CHECKING:
@@ -46,11 +45,7 @@ def get_stub_symbol(name: str) -> Optional[Symbol]:
             should be in the form `module.name`. Otherwise, the symbol is looked up in
             the builtins context.
     """
-    if "." in name:
-        context, name = name.rsplit(".", 1)
-    else:
-        context = "builtins"
-
+    context, name = name.rsplit(".", 1)
     if scope := _type_context.stubs.get(context):
         return scope.get(name)
     return None
@@ -62,11 +57,32 @@ def get_stub_entity(name: str) -> Optional["PyEntity"]:
     return None
 
 
-def get_stub_class(name: str) -> Optional["PyClass"]:
+_dummy_classes: dict[str, "PyClass"] = {}
+
+
+@overload
+def get_stub_class(name: str, dummy: Literal[False] = ...) -> Optional["PyClass"]: ...
+
+
+@overload
+def get_stub_class(name: str, dummy: Literal[True]) -> "PyClass": ...
+
+
+def get_stub_class(name: str, dummy: bool = False) -> Optional["PyClass"]:
     from .entity import PyClass
 
     if isinstance(entity := get_stub_entity(name), PyClass):
         return entity
+
+    if dummy:
+        if name in _dummy_classes:
+            return _dummy_classes[name]
+
+        cls_name = name.rsplit(".", 1)[-1]
+        dummy_scope = SymbolTable(f"<class '{cls_name}'>", ScopeType.CLASS)
+        dummy_cls = PyClass(cls_name, dummy_scope)
+        _dummy_classes[name] = dummy_cls
+        return dummy_cls
 
     return None
 
@@ -198,8 +214,33 @@ class _PyAnyType(PyType):
 PyType.ANY = _PyAnyType()
 
 
+class PyInstanceBase(PyType, ABC):
+    """
+    A base class for instance types.
+    """
+
+    @abstractmethod
+    def get_cls(self) -> "PyClass":
+        """
+        Returns the class of the instance.
+        """
+        pass
+
+    def attr_scopes(self) -> Iterator[SymbolTable]:
+        return self.get_cls().mro_scopes(instance=True)
+
+    def get_return_type(self) -> PyType:
+        return self.get_cls().get_method_return_type("__call__")
+
+    def get_subscripted_type(self) -> PyType:
+        return self.get_cls().get_method_return_type("__getitem__")
+
+    def get_awaited_type(self) -> PyType:
+        return self.get_cls().get_method_return_type("__await__")
+
+
 @final
-class PyModuleType(PyType):
+class PyModuleType(PyInstanceBase):
     def __init__(self, module: "PyModule"):
         self.module = module
 
@@ -216,15 +257,16 @@ class PyModuleType(PyType):
     def entity(self) -> "PyEntity":
         return self.module
 
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("types.ModuleType", dummy=True)
+
     def attr_scopes(self) -> Iterator[SymbolTable]:
         yield self.module.context.global_scope
-
-        if module_cls := get_stub_class("types.ModuleType"):
-            yield from module_cls.mro_scopes()
+        yield from super().attr_scopes()
 
 
 @final
-class PyClassType(PyType):
+class PyClassType(PyInstanceBase):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
 
@@ -241,13 +283,18 @@ class PyClassType(PyType):
     def entity(self) -> "PyEntity":
         return self.cls
 
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("builtins.type", dummy=True)
+
     def attr_scopes(self) -> Iterator[SymbolTable]:
-        return self.cls.mro_scopes()
+        yield from self.cls.mro_scopes()
+        yield from super().attr_scopes()
 
     def get_return_type(self) -> PyType:
         return PyInstanceType(self.cls)
 
     def get_subscripted_type(self) -> PyType:
+        # TODO: Generic alias.
         return self.cls.get_method_return_type("__class_getitem__")
 
     def get_annotated_type(self, context: "PythonContext") -> PyType:
@@ -260,14 +307,11 @@ class PyClassType(PyType):
         return PyType.ANY
 
 
-class PyInstanceType(PyType):
+class PyInstanceType(PyInstanceBase):
     def __init__(self, cls: "PyClass"):
         self.cls = cls
 
     def __str__(self) -> str:
-        if self.cls is get_stub_class("types.NoneType"):
-            return "None"
-
         return self.cls.name
 
     def __repr__(self) -> str:
@@ -276,17 +320,8 @@ class PyInstanceType(PyType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyInstanceType) and self.cls is other.cls
 
-    def attr_scopes(self) -> Iterator[SymbolTable]:
-        return self.cls.mro_scopes(instance=True)
-
-    def get_return_type(self) -> PyType:
-        return self.cls.get_method_return_type("__call__")
-
-    def get_subscripted_type(self) -> PyType:
-        return self.cls.get_method_return_type("__getitem__")
-
-    def get_awaited_type(self) -> PyType:
-        return self.cls.get_method_return_type("__await__")
+    def get_cls(self) -> "PyClass":
+        return self.cls
 
     @classmethod
     def from_stub(cls, name: str) -> PyType:
@@ -308,7 +343,7 @@ class PySelfType(PyInstanceType):
 
 
 @final
-class PyFunctionType(PyType):
+class PyFunctionType(PyInstanceBase):
     def __init__(self, func: "PyFunction"):
         self.func = func
 
@@ -325,10 +360,8 @@ class PyFunctionType(PyType):
     def entity(self) -> "PyEntity":
         return self.func
 
-    def attr_scopes(self) -> Iterator[SymbolTable]:
-        if function_cls := get_stub_class("types.FunctionType"):
-            return PyClassType(function_cls).attr_scopes()
-        return iter(())
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("types.FunctionType", dummy=True)
 
     def get_return_type(self) -> PyType:
         return self.func.return_type or PyType.ANY
@@ -344,46 +377,49 @@ class PyFunctionType(PyType):
         return PyType.ANY
 
 
-type SimpleLiteral = None | bool | int | float | complex | str | bytes | EllipsisType
-type CompoundLiteral = (
-    SimpleLiteral
-    | tuple[CompoundLiteral]
-    | list[CompoundLiteral]
-    | set[CompoundLiteral]
-    | dict[CompoundLiteral, CompoundLiteral]
-)
+@final
+class PyNoneType(PyInstanceBase):
+    def __str__(self) -> str:
+        return "NoneType"
 
-SIMPLE_LITERAL_TYPES: set[type] = {
-    NoneType,
-    bool,
-    int,
-    float,
-    complex,
-    str,
-    bytes,
-    EllipsisType,
-}
-COMPUND_LITERAL_TYPES: set[type] = {tuple, list, set, dict}
-LITERAL_TYPES = SIMPLE_LITERAL_TYPES | COMPUND_LITERAL_TYPES
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyNoneType)
+
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("types.NoneType", dummy=True)
+
+    def get_annotated_type(self, context: "PythonContext") -> PyType:
+        # None stands its own type in type annotations.
+        return self
+
+
+@final
+class PyEllipsisType(PyInstanceBase):
+    def __str__(self) -> str:
+        return "EllipsisType"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyEllipsisType)
+
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("types.EllipsisType", dummy=True)
+
+
+type SimpleLiteral = bool | int | float | complex | str | bytes
+
+SIMPLE_LITERAL_TYPES: set[type] = {bool, int, float, complex, str, bytes}
 
 LITERAL_TYPE_MAP: dict[type, str] = {
-    x: f"types.{x.__name__}" if x in (NoneType, EllipsisType) else x.__name__
-    for x in LITERAL_TYPES
+    x: f"builtins.{x.__name__}" for x in SIMPLE_LITERAL_TYPES
 }
 
 
 @final
-class PyLiteralType(PyType):
-    def __init__(self, value: CompoundLiteral):
+class PyLiteralType(PyInstanceBase):
+    def __init__(self, value: SimpleLiteral):
         self.value = value
 
     def __str__(self) -> str:
-        if self.value is None:
-            return "None"
-
-        if self.value is ...:
-            return "EllipsisType"
-
         return f"Literal[{self.value!r}]"
 
     def __repr__(self) -> str:
@@ -400,20 +436,10 @@ class PyLiteralType(PyType):
     def value_type_name(self) -> str:
         return self.value_type.__name__
 
-    def get_base_type(self) -> PyInstanceType:
-        """
-        Returns the base type of the literal.
-        """
-        return PyInstanceType.from_stub(LITERAL_TYPE_MAP[self.value_type])
-
-    def attr_scopes(self) -> Iterator[SymbolTable]:
-        return self.get_base_type().attr_scopes()
+    def get_cls(self) -> "PyClass":
+        return get_stub_class(LITERAL_TYPE_MAP[self.value_type], dummy=True)
 
     def get_annotated_type(self, context: "PythonContext") -> PyType:
-        # None stands its own type in type annotations.
-        if self.value is None:
-            return PyInstanceType.from_stub("types.NoneType")
-
         # String literals can represent forward references.
         if self.value_type is str:
             # TODO: Parse the string literal as tree and resolve the type.
@@ -425,4 +451,4 @@ class PyLiteralType(PyType):
 
     def get_inferred_type(self) -> PyType:
         # TODO: Handle compound literals.
-        return self.get_base_type()
+        return self.get_cls().get_instance_type()

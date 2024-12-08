@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING, Iterator, Literal, Optional
 from .scope import ScopeType, SymbolTable
 from .types import (
     PyClassType,
+    PyEllipsisType,
     PyFunctionType,
     PyInstanceType,
     PyModuleType,
+    PyNoneType,
     PySelfType,
     PyType,
     get_stub_class,
@@ -125,6 +127,10 @@ class PyClass(_ModifiersMixin, PyEntity):
         return PyClassType(self)
 
     def get_instance_type(self) -> PyInstanceType:
+        if self is get_stub_class("types.NoneType"):
+            return PyNoneType()
+        if self is get_stub_class("types.EllipsisType"):
+            return PyEllipsisType()
         return PyInstanceType(self)
 
     def get_self_type(self) -> PySelfType:
@@ -212,7 +218,9 @@ class PyClass(_ModifiersMixin, PyEntity):
             mro_lists = [l for l in mro_lists if l]
 
         # All classes have `object` as the last base class.
-        if (object_cls := get_stub_class("object")) and result[-1] is not object_cls:
+        if (object_cls := get_stub_class("builtins.object")) and result[
+            -1
+        ] is not object_cls:
             result.append(object_cls)
 
         self.mro = result
