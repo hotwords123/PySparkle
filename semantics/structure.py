@@ -273,20 +273,11 @@ class PyImportFromAsName(NamedTuple):
 
 @dataclasses.dataclass
 class PyArguments:
-    args: list["PyPositionalArgument"] = dataclasses.field(default_factory=list)
+    args: list["PyType"] = dataclasses.field(default_factory=list)
     kwargs: list["PyKeywordArgument"] = dataclasses.field(default_factory=list)
-    double_stars: list["PyDoubleStarArgument"] = dataclasses.field(default_factory=list)
-
-
-class PyPositionalArgument(NamedTuple):
-    type: PyType
-    starred: bool = False
+    double_stars: list["PyType"] = dataclasses.field(default_factory=list)
 
 
 class PyKeywordArgument(NamedTuple):
     name: str
-    type: PyType
-
-
-class PyDoubleStarArgument(NamedTuple):
     type: PyType

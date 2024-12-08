@@ -12,13 +12,11 @@ from .entity import PyClass, PyFunction, PyLambda, PyParameter, PyTypeError
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyArguments,
-    PyDoubleStarArgument,
     PyImportFrom,
     PyImportFromAsName,
     PyImportFromTargets,
     PyImportName,
     PyKeywordArgument,
-    PyPositionalArgument,
     PythonContext,
 )
 from .symbol import Symbol, SymbolType
@@ -29,7 +27,9 @@ from .types import (
     PyInstanceType,
     PyLiteralType,
     PyNoneType,
+    PyTupleType,
     PyType,
+    PyUnpack,
     get_stub_entity,
 )
 
@@ -456,10 +456,10 @@ class PythonVisitor(PythonParserVisitor):
 
             # Handle class arguments.
             entity.arguments = arguments
+            # NOTE: In theory, we should handle starred arguments here, but in
+            # practice, syntaxes like `class C(*args):` are hardly ever used.
             entity.bases.extend(
-                arg.type.cls
-                for arg in arguments.args
-                if not arg.starred and isinstance(arg.type, PyClassType)
+                arg.cls for arg in arguments.args if isinstance(arg, PyClassType)
             )
 
             with self.context.wrap_errors(PyTypeError):
@@ -784,11 +784,11 @@ class PythonVisitor(PythonParserVisitor):
         annotation: PyType = self.visitExpression(ctx.expression())
         return annotation.get_annotated_type(self.context)
 
-    # starAnnotation: ':' starExpression;
+    # starAnnotation: ':' starredExpression;
     @_type_check
     @_visitor_guard
     def visitStarAnnotation(self, ctx: PythonParser.StarAnnotationContext) -> PyType:
-        annotation: PyType = self.visitStarExpression(ctx.starExpression())
+        annotation: PyType = self.visitStarredExpression(ctx.starredExpression())
         return PyType.ANY  # TODO: star-annotated parameters
 
     # default: '=' expression;
@@ -836,6 +836,70 @@ class PythonVisitor(PythonParserVisitor):
         self.visitBlock(ctx.block())
 
     # TODO: expressions
+
+    # starExpressions
+    #   : starExpression (',' starExpression)* ','?;
+    @_type_check
+    @_visitor_guard
+    def visitStarExpressions(self, ctx: PythonParser.StarExpressionsContext) -> PyType:
+        if ctx.COMMA():
+            # If at least one comma is present, the result is a tuple.
+            return PyTupleType.from_starred(
+                self.visitStarExpression(expr) for expr in ctx.starExpression()
+            )
+
+        else:
+            # Otherwise, the result is the type of the single expression. Note that the
+            # expression must not be a starred expression in this case.
+            type_ = self.visitStarExpression(ctx.starExpression(0))
+            if isinstance(type_, PyUnpack):
+                self.context.errors.append(
+                    SemanticError("Starred expressions are not allowed here")
+                )
+                return PyType.ANY
+
+            return type_
+
+    # starExpression
+    #   : '*' bitwise
+    #   | expression;
+    @_type_check
+    @_visitor_guard
+    def visitStarExpression(self, ctx: PythonParser.StarExpressionContext) -> PyType:
+        if ctx.STAR():
+            return PyUnpack(self.visitBitwise(ctx.bitwise()))
+        else:
+            return self.visitExpression(ctx.expression())
+
+    # starNamedExpressions
+    #   : starNamedExpression (',' starNamedExpression)* ','?;
+    @_type_check
+    @_visitor_guard
+    def visitStarNamedExpressions(
+        self, ctx: PythonParser.StarNamedExpressionsContext
+    ) -> list[PyType]:
+        """
+        Note:
+            We do not return a tuple type here in contrast to `visitStarExpressions`,
+            because the result is not necessarily a tuple. This constuct is also used
+            in list and set displays.
+        """
+        return [
+            self.visitStarNamedExpression(expr) for expr in ctx.starNamedExpression()
+        ]
+
+    # starNamedExpression
+    #   : '*' bitwise
+    #   | namedExpression;
+    @_type_check
+    @_visitor_guard
+    def visitStarNamedExpression(
+        self, ctx: PythonParser.StarNamedExpressionContext
+    ) -> PyType:
+        if ctx.STAR():
+            return PyUnpack(self.visitBitwise(ctx.bitwise()))
+        else:
+            return self.visitNamedExpression(ctx.namedExpression())
 
     # assignmentExpression: NAME ':=' expression;
     @_visitor_guard
@@ -935,9 +999,9 @@ class PythonVisitor(PythonParserVisitor):
 
         elif slices := ctx.slices():
             # Subscription
-            self.visitSlices(slices)
+            key_type = self.visitSlices(slices)
 
-            return type_.get_subscripted_type()
+            return type_.get_subscripted_type(key_type)
 
         elif genexp := ctx.genexp():
             # Function call with generator expression
@@ -951,6 +1015,8 @@ class PythonVisitor(PythonParserVisitor):
                 self.visitArguments(arguments)
 
             return type_.get_return_type()
+
+    # TODO: slices
 
     # atom
     #   : NAME
@@ -1219,14 +1285,15 @@ class PythonVisitor(PythonParserVisitor):
     @_type_check
     @_visitor_guard
     def visitTuple(self, ctx: PythonParser.TupleContext) -> PyType:
-        if expression := ctx.starNamedExpression():
-            self.visitStarNamedExpression(expression)
+        item_types: list[PyType] = []
 
-        if expressions := ctx.starNamedExpressions():
-            self.visitStarNamedExpressions(expressions)
+        if node := ctx.starNamedExpression():
+            item_types.append(self.visitStarNamedExpression(node))
 
-        # TODO: literals
-        return PyInstanceType.from_stub("builtins.tuple")
+        if node := ctx.starNamedExpressions():
+            item_types.extend(self.visitStarNamedExpressions(node))
+
+        return PyTupleType.from_starred(item_types)
 
     # set: '{' starNamedExpressions '}';
     @_type_check
@@ -1361,20 +1428,15 @@ class PythonVisitor(PythonParserVisitor):
     #   | expression;
     @_type_check
     @_visitor_guard
-    def visitArg(self, ctx: PythonParser.ArgContext) -> PyPositionalArgument:
-        starred = False
-
+    def visitArg(self, ctx: PythonParser.ArgContext) -> PyType:
         if node := ctx.starredExpression():
-            type_ = self.visitStarredExpression(node)
-            starred = True
+            return self.visitStarredExpression(node)
 
         elif node := ctx.assignmentExpression():
-            type_ = self.visitAssignmentExpression(node)
+            return self.visitAssignmentExpression(node)
 
         elif node := ctx.expression():
-            type_ = self.visitExpression(node)
-
-        return PyPositionalArgument(type_, starred=starred)
+            return self.visitExpression(node)
 
     # kwargs
     #   : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
@@ -1413,7 +1475,7 @@ class PythonVisitor(PythonParserVisitor):
     def visitStarredExpression(
         self, ctx: PythonParser.StarredExpressionContext
     ) -> PyType:
-        return self.visitExpression(ctx.expression())
+        return PyUnpack(self.visitExpression(ctx.expression()))
 
     # kwargOrStarred
     #   : NAME '=' expression
@@ -1422,7 +1484,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitKwargOrStarred(
         self, ctx: PythonParser.KwargOrStarredContext
-    ) -> PyKeywordArgument | PyPositionalArgument:
+    ) -> PyKeywordArgument | PyType:
         if node := ctx.NAME():
             name = self.visitName(node)
             type_ = self.visitExpression(ctx.expression())
@@ -1438,7 +1500,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitKwargOrDoubleStarred(
         self, ctx: PythonParser.KwargOrDoubleStarredContext
-    ) -> PyKeywordArgument | PyDoubleStarArgument:
+    ) -> PyKeywordArgument | PyType:
         type_ = self.visitExpression(ctx.expression())
 
         if node := ctx.NAME():
@@ -1446,7 +1508,7 @@ class PythonVisitor(PythonParserVisitor):
             return PyKeywordArgument(name, type_)
 
         else:
-            return PyDoubleStarArgument(type_)
+            return type_
 
     # starTargets: starTarget (',' starTarget)* ','?;
     @_type_check

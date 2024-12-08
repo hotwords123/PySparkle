@@ -232,7 +232,7 @@ paramMaybeDefault: param default?;
 param: NAME annotation?;
 paramStarAnnotation: NAME starAnnotation;
 annotation: ':' expression;
-starAnnotation: ':' starExpression;
+starAnnotation: ':' starredExpression;
 default: '=' expression;
 
 // If statement

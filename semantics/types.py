@@ -11,7 +11,7 @@ References
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Iterator, Literal, Optional, final, overload
+from typing import TYPE_CHECKING, Iterable, Iterator, Literal, Optional, final, overload
 
 from .scope import ScopeType, SymbolTable
 from .symbol import Symbol
@@ -168,7 +168,7 @@ class PyType(ABC):
         """
         return PyType.ANY
 
-    def get_subscripted_type(self) -> "PyType":
+    def get_subscripted_type(self, key: "PyType") -> "PyType":
         """
         Returns the type obtained by subscripting the type.
         """
@@ -232,7 +232,7 @@ class PyInstanceBase(PyType, ABC):
     def get_return_type(self) -> PyType:
         return self.get_cls().get_method_return_type("__call__")
 
-    def get_subscripted_type(self) -> PyType:
+    def get_subscripted_type(self, key: PyType) -> PyType:
         return self.get_cls().get_method_return_type("__getitem__")
 
     def get_awaited_type(self) -> PyType:
@@ -293,7 +293,7 @@ class PyClassType(PyInstanceBase):
     def get_return_type(self) -> PyType:
         return PyInstanceType(self.cls)
 
-    def get_subscripted_type(self) -> PyType:
+    def get_subscripted_type(self, key: PyType) -> PyType:
         # TODO: Generic alias.
         return self.cls.get_method_return_type("__class_getitem__")
 
@@ -428,20 +428,12 @@ class PyLiteralType(PyInstanceBase):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyLiteralType) and self.value == other.value
 
-    @property
-    def value_type(self) -> type:
-        return type(self.value)
-
-    @property
-    def value_type_name(self) -> str:
-        return self.value_type.__name__
-
     def get_cls(self) -> "PyClass":
-        return get_stub_class(LITERAL_TYPE_MAP[self.value_type], dummy=True)
+        return get_stub_class(LITERAL_TYPE_MAP[type(self.value)], dummy=True)
 
     def get_annotated_type(self, context: "PythonContext") -> PyType:
         # String literals can represent forward references.
-        if self.value_type is str:
+        if type(self.value) is str:
             # TODO: Parse the string literal as tree and resolve the type.
             if symbol := context.current_scope.lookup(self.value):
                 return symbol.get_type().get_annotated_type(context)
@@ -452,3 +444,100 @@ class PyLiteralType(PyInstanceBase):
     def get_inferred_type(self) -> PyType:
         # TODO: Handle compound literals.
         return self.get_cls().get_instance_type()
+
+
+@final
+class PyTupleType(PyInstanceBase):
+    def __init__(self, types: Iterable[PyType]):
+        """
+        Creates a tuple type from the given types. The types must not contain PyUnpack.
+        """
+        self.types = tuple(types)
+        assert all(not isinstance(x, PyUnpack) for x in self.types)
+
+    def __str__(self) -> str:
+        return f"tuple[{', '.join(map(str, self.types))}]"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} types={self.types!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyTupleType) and self.types == other.types
+
+    def get_cls(self) -> "PyClass":
+        return get_stub_class("builtins.tuple", dummy=True)
+
+    def get_subscripted_type(self, key: PyType) -> PyType:
+        if isinstance(key, PyLiteralType) and type(key.value) is int:
+            index = key.value
+            if 0 <= index < len(self.types):
+                return self.types[index]
+
+        if isinstance(key, PyInstanceType) and key.cls is get_stub_class(
+            "builtins.int"
+        ):
+            "TODO: Return the union of all types."
+
+        # TODO: Handle slices.
+
+        return PyType.ANY
+
+    def get_inferred_type(self) -> PyType:
+        return PyTupleType(tuple(x.get_inferred_type() for x in self.types))
+
+    @staticmethod
+    def from_starred(item_types: Iterable[PyType]) -> PyType:
+        """
+        Creates a tuple type from starred expressions, unpacking the starred items.
+
+        Args:
+            item_types: The types of the items in the tuple, including starred items.
+
+        Returns:
+            The tuple type.
+        """
+        unpacked_types: list[PyType] = []
+
+        for item_type in item_types:
+            if isinstance(item_type, PyUnpack):
+                if inner_types := item_type.get_unpacked_types():
+                    # Unpack the starred item if possible.
+                    unpacked_types.extend(inner_types)
+                else:
+                    # Otherwise, fall back to a normal tuple type.
+                    return PyInstanceType.from_stub("builtins.tuple")
+            else:
+                # For normal items, simply add them to the tuple.
+                unpacked_types.append(item_type)
+
+        return PyTupleType(item_types)
+
+
+@final
+class PyUnpack(PyType):
+    """
+    Wrapper type for unpacked types in star expressions.
+    """
+
+    def __init__(self, inner: PyType):
+        self.inner = inner
+
+    def __str__(self) -> str:
+        return f"*{self.inner}"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} inner={self.inner!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyUnpack) and self.inner == other.inner
+
+    def get_unpacked_types(self) -> Optional[tuple["PyType", ...]]:
+        """
+        Returns the exact types of the unpacked items, if known.
+
+        Currently, this only works for PyTupleType.
+        """
+        if isinstance(self.inner, PyTupleType):
+            return self.inner.types
+
+        return None
