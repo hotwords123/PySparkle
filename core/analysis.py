@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from semantics.entity import PyModule
+from semantics.entity import PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
@@ -68,7 +68,11 @@ class PythonAnalyzer:
             if isinstance(stmt, PyImportName):
                 self.load_import_name(module.context, stmt)
             elif isinstance(stmt, PyImportFrom):
-                self.load_import_from(module.name, module.context, stmt)
+                if isinstance(module, PyPackage):
+                    base_name = module.name
+                else:
+                    base_name = module.package
+                self.load_import_from(base_name, module.context, stmt)
 
     def load_import_name(self, context: PythonContext, stmt: PyImportName):
         """
