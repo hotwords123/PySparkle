@@ -341,6 +341,11 @@ class PySelfType(PyInstanceType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PySelfType) and super().__eq__(other)
 
+    def get_inferred_type(self) -> PyType:
+        # The special handling of instance types only applies to the `self` parameter,
+        # not to its aliases.
+        return PyInstanceType(self.cls)
+
 
 @final
 class PyFunctionType(PyInstanceBase):
