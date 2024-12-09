@@ -32,6 +32,7 @@ from .types import (
     PyType,
     PyUnpack,
     get_stub_entity,
+    set_forward_ref_evaluator,
 )
 
 
@@ -130,7 +131,8 @@ class PythonVisitor(PythonParserVisitor):
         Visits the entire parse tree for the second pass.
         """
         self.pass_num = 2
-        self.visit(tree)
+        with set_forward_ref_evaluator(self._evaluate_forward_ref):
+            self.visit(tree)
 
     def _resolve_outer_symbols(self):
         for symbol, scope in self._outer_symbols:
@@ -152,6 +154,12 @@ class PythonVisitor(PythonParserVisitor):
                 symbol.public = False
             elif symbol.public is None:
                 symbol.public = symbol.type is not SymbolType.IMPORTED
+
+    def _evaluate_forward_ref(self, value: str) -> PyType:
+        # TODO: Parse the string literal as tree and resolve the type.
+        if symbol := self.context.current_scope.lookup(value):
+            return symbol.get_type()
+        return PyType.ANY
 
     def aggregateResult(self, aggregate, nextResult):
         return aggregate or nextResult
@@ -213,7 +221,7 @@ class PythonVisitor(PythonParserVisitor):
             annotation: PyType
             self.visitSingleTarget(
                 ctx.singleTarget(),
-                value_type=annotation.get_annotated_type(self.context),
+                value_type=annotation.get_annotated_type(),
             )
 
     # (starTargets '=')+ assignmentRhs
@@ -523,7 +531,7 @@ class PythonVisitor(PythonParserVisitor):
 
             if self.pass_num == 2:
                 annotation: PyType
-                entity.return_type = annotation.get_annotated_type(self.context)
+                entity.return_type = annotation.get_annotated_type()
 
         with self.context.set_parent_function(entity):
             if type_params := ctx.typeParams():
@@ -782,7 +790,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitAnnotation(self, ctx: PythonParser.AnnotationContext) -> PyType:
         annotation: PyType = self.visitExpression(ctx.expression())
-        return annotation.get_annotated_type(self.context)
+        return annotation.get_annotated_type()
 
     # starAnnotation: ':' starredExpression;
     @_type_check

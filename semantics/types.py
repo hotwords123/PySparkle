@@ -11,19 +11,28 @@ References
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Iterable, Iterator, Literal, Optional, final, overload
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Iterable,
+    Iterator,
+    Literal,
+    Optional,
+    final,
+    overload,
+)
 
 from .scope import ScopeType, SymbolTable
 from .symbol import Symbol
 
 if TYPE_CHECKING:
     from .entity import PyClass, PyEntity, PyFunction, PyModule
-    from .structure import PythonContext
 
 
 class _TypeContext(threading.local):
     def __init__(self):
         self.stubs: dict[str, SymbolTable] = {}
+        self.forward_ref_evaluator: Callable[[str], "PyType"] = lambda _: PyType.ANY
 
 
 _type_context = _TypeContext()
@@ -31,9 +40,22 @@ _type_context = _TypeContext()
 
 @contextmanager
 def set_type_context(stubs: dict[str, SymbolTable]):
+    old_stubs = _type_context.stubs
     _type_context.stubs = stubs
-    yield
-    _type_context.stubs = {}
+    try:
+        yield
+    finally:
+        _type_context.stubs = old_stubs
+
+
+@contextmanager
+def set_forward_ref_evaluator(callback: Callable[[str], "PyType"]):
+    old_evaluator = _type_context.forward_ref_evaluator
+    _type_context.forward_ref_evaluator = callback
+    try:
+        yield
+    finally:
+        _type_context.forward_ref_evaluator = old_evaluator
 
 
 def get_stub_symbol(name: str) -> Optional[Symbol]:
@@ -180,15 +202,12 @@ class PyType(ABC):
         """
         return PyType.ANY
 
-    def get_annotated_type(self, context: "PythonContext") -> "PyType":
+    def get_annotated_type(self) -> "PyType":
         """
         Returns the type of the annotation.
 
         This is used for type annotations, e.g. determining the type of a variable from
         its annotation.
-
-        Args:
-            context: The context in which the annotation is used.
         """
         return PyType.ANY
 
@@ -297,7 +316,7 @@ class PyClassType(PyInstanceBase):
         # TODO: Generic alias.
         return self.cls.get_method_return_type("__class_getitem__")
 
-    def get_annotated_type(self, context: "PythonContext") -> PyType:
+    def get_annotated_type(self) -> PyType:
         return self.cls.get_instance_type()
 
     @classmethod
@@ -393,7 +412,7 @@ class PyNoneType(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.NoneType", dummy=True)
 
-    def get_annotated_type(self, context: "PythonContext") -> PyType:
+    def get_annotated_type(self) -> PyType:
         # None stands its own type in type annotations.
         return self
 
@@ -436,12 +455,11 @@ class PyLiteralType(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class(LITERAL_TYPE_MAP[type(self.value)], dummy=True)
 
-    def get_annotated_type(self, context: "PythonContext") -> PyType:
+    def get_annotated_type(self) -> PyType:
         # String literals can represent forward references.
         if type(self.value) is str:
-            # TODO: Parse the string literal as tree and resolve the type.
-            if symbol := context.current_scope.lookup(self.value):
-                return symbol.get_type().get_annotated_type(context)
+            evaluated_type = _type_context.forward_ref_evaluator(self.value)
+            return evaluated_type.get_annotated_type()
 
         # Other literals cannot be directly used for type annotations.
         return PyType.ANY
