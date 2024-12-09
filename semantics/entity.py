@@ -90,8 +90,6 @@ class PyPackage(PyModule):
 
 
 class _ModifiersMixin:
-    __slots__ = ("modifiers",)
-
     def init_modifiers(self):
         self.modifiers: set[str] = set()
 
@@ -116,7 +114,9 @@ class PyClass(_ModifiersMixin, PyEntity):
         self.decorators: list[PyType] = []
         self.arguments: Optional["PyArguments"] = None
         self.bases: list[PyClass] = []
-        self.mro: list[PyClass] = []
+
+        self._mro: Optional[list[PyClass]] = None
+        self._computing_mro = False
 
         self.init_modifiers()
 
@@ -169,7 +169,25 @@ class PyClass(_ModifiersMixin, PyEntity):
             return method.return_type or PyType.ANY
         return PyType.ANY
 
-    def compute_mro(self):
+    @property
+    def mro(self) -> list["PyClass"]:
+        if self._mro is None:
+            if self._computing_mro:
+                # TODO: Recursive inheritance; should raise an error.
+                return [self]
+
+            self._computing_mro = True
+            try:
+                self._mro = self.compute_mro()
+            except PyTypeError:
+                # TODO: Handle the error.
+                self._mro = [self]
+            finally:
+                self._computing_mro = False
+
+        return self._mro
+
+    def compute_mro(self) -> list["PyClass"]:
         """
         Computes the method resolution order for the class according to the C3
         linearization algorithm.
@@ -218,12 +236,11 @@ class PyClass(_ModifiersMixin, PyEntity):
             mro_lists = [l for l in mro_lists if l]
 
         # All classes have `object` as the last base class.
-        if (object_cls := get_stub_class("builtins.object")) and result[
-            -1
-        ] is not object_cls:
-            result.append(object_cls)
+        if object_cls := get_stub_class("builtins.object"):
+            if result[-1] is not object_cls:
+                result.append(object_cls)
 
-        self.mro = result
+        return result
 
 
 class PyFunction(_ModifiersMixin, PyEntity):
