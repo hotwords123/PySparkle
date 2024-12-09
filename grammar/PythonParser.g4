@@ -402,7 +402,7 @@ primary
 slices: slice (',' slice)* ','?;
 
 slice
-    : expression? ':' expression? (':' expression)?
+    : startExpr=expression? ':' stopExpr=expression? (':' stepExpr=expression)?
     | namedExpression
     | starredExpression;
 

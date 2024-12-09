@@ -1030,7 +1030,55 @@ class PythonVisitor(PythonParserVisitor):
 
             return type_.get_return_type()
 
-    # TODO: slices
+    # slices: slice (',' slice)* ','?;
+    @_type_check
+    @_visitor_guard
+    def visitSlices(self, ctx: PythonParser.SlicesContext) -> PyType:
+        if ctx.COMMA():
+            # If at least one comma is present, the result is a tuple.
+            return PyTupleType.from_starred(
+                [self.visitSlice(node) for node in ctx.slice_()]
+            )
+
+        else:
+            # Otherwise, the result may be a tuple or a single slice, depending on
+            # whether the slice is a starred expression.
+            type_ = self.visitSlice(ctx.slice_(0))
+            if isinstance(type_, PyUnpack):
+                return PyTupleType.from_starred((type_,))
+            return type_
+
+    # slice
+    #   : startExpr=expression? ':' stopExpr=expression? (':' stepExpr=expression)?
+    #   | namedExpression
+    #   | starredExpression;
+    @_type_check
+    @_visitor_guard
+    def visitSlice(self, ctx: PythonParser.SliceContext) -> PyType:
+        if node := ctx.namedExpression():
+            return self.visitNamedExpression(node)
+
+        elif node := ctx.starredExpression():
+            return self.visitStarredExpression(node)
+
+        else:
+            start = self.visit_maybe_expression(ctx.startExpr)
+            stop = self.visit_maybe_expression(ctx.stopExpr)
+            step = self.visit_maybe_expression(ctx.stepExpr)
+
+            return PyInstanceType.from_stub("builtins.slice")
+
+    def visit_maybe_expression(
+        self, ctx: Optional[PythonParser.ExpressionContext]
+    ) -> PyType:
+        """
+        Visit an optional expression node.
+
+        This is a helper method for handling slice expressions.
+        """
+        if ctx is not None:
+            return self.visitExpression(ctx)
+        return PyNoneType()
 
     # atom
     #   : NAME
