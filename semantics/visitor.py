@@ -757,7 +757,7 @@ class PythonVisitor(PythonParserVisitor):
         annotation_node = ctx.starAnnotation()
 
         if self.pass_num == 1:
-            param = PyParameter(name, star=True, star_annotation=annotation_node)
+            param = PyParameter(name, star="*", star_annotation=annotation_node)
 
             symbol = Symbol(SymbolType.PARAMETER, name, name_node, entity=param)
             self.context.set_node_info(
@@ -854,9 +854,11 @@ class PythonVisitor(PythonParserVisitor):
             type_ = self.visitStarExpression(node := ctx.starExpression(0))
             if isinstance(type_, PyUnpack):
                 self.context.errors.append(
-                    SemanticError("Starred expressions are not allowed here"),
-                    node.start,
-                    node.stop,
+                    SemanticError(
+                        "Starred expressions are not allowed here",
+                        node.start,
+                        node.stop,
+                    ),
                 )
                 return PyType.ANY
 
@@ -1580,7 +1582,7 @@ class PythonVisitor(PythonParserVisitor):
         self,
         ctx: PythonParser.StarTargetsContext,
         star_index: Optional[int],
-        unpacked_types: tuple[PyType],
+        unpacked_types: tuple[PyType, ...],
     ):
         """
         Helper method to handle the assignment of unpacked values to starred targets.

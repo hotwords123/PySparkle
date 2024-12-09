@@ -15,6 +15,7 @@ from semantics.entity import PyFunction, PyModule
 from semantics.structure import PythonContext
 from semantics.symbol import Symbol, SymbolType
 from semantics.token import TOKEN_KIND_MAP, TokenKind
+from semantics.types import PyType
 
 
 def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
@@ -59,7 +60,7 @@ def get_token_target(context: PythonContext, token: CommonToken) -> Optional[Sym
 
 def get_token_entity_type(
     context: PythonContext, token: CommonToken
-) -> Optional[SymbolType]:
+) -> Optional[PyType]:
     if token_info := context.token_info.get(token):
         if symbol := token_info.get("symbol"):
             return symbol.get_type()
@@ -143,7 +144,7 @@ def main(args):
         out_file.close()
 
 
-def parse_args(args: list[str] = None):
+def parse_args(args: Optional[list[str]] = None):
     import argparse
 
     # fmt: off
