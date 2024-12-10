@@ -10,7 +10,15 @@ from .entity import PyEntity, PyFunction, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TokenInfo, TokenKind
-from .types import PyClassType, PyFunctionType, PySelfType, PyType
+from .types import (
+    PyClassType,
+    PyFunctionType,
+    PyInstanceType,
+    PySelfType,
+    PyType,
+    TypedSymbol,
+    get_stub_class,
+)
 
 
 class PythonContext:
@@ -26,7 +34,7 @@ class PythonContext:
         # Used when analyzing parameter specifications.
         self.parent_function: Optional[PyFunction] = None
         # Used when analyzing function calls.
-        self.called_function: Optional[PyFunction] = None
+        self.called_function: Optional[PyFunctionType] = None
 
         self.imports: list[PyImport] = []
 
@@ -172,10 +180,12 @@ class PythonContext:
         """
         if attr := on_type.get_attr(name):
             # If the attribute exists, the target is an attribute.
-            symbol, _ = attr
-            self.set_node_info(node, symbol=symbol)
+            symbol, type_ = attr
             if value_type is not None:
-                self.set_variable_type(symbol, value_type, override=override_type)
+                type_ = self.set_variable_type(
+                    symbol, value_type, override=override_type
+                )
+            self.set_node_info(node, symbol=symbol, type=type_)
 
         elif isinstance(on_type, PySelfType):
             # If the attribute does not exist, but the target is `self`, the attribute
@@ -204,7 +214,7 @@ class PythonContext:
         """
         if attr := on_type.get_attr(name):
             symbol, type_ = attr
-            self.set_node_info(node, symbol=symbol)
+            self.set_node_info(node, symbol=symbol, type=type_)
             return type_
 
         else:
@@ -224,14 +234,14 @@ class PythonContext:
     def set_called_function(self, type: PyType) -> Iterator[None]:
         # TODO: This logic should be implemented in the `types` module.
         if isinstance(type, PyFunctionType):
-            func = type.func
+            func_type = type
         elif isinstance(type, PyClassType):
-            func = type.cls.lookup_method("__init__")
+            func_type = type.lookup_method("__init__")
         else:
-            func = None
+            func_type = None
 
         old_function = self.called_function
-        self.called_function = func
+        self.called_function = func_type
         try:
             yield
         finally:
@@ -249,25 +259,37 @@ class PythonContext:
             type: The type of the keyword parameter.
         """
         if self.called_function is not None:
-            kwargs_symbol: Optional[Symbol] = None
+            func = self.called_function.func
+            kwargs_symbol: Optional[TypedSymbol] = None
 
-            for param in self.called_function.parameters:
+            for param in func.parameters:
                 if not param.posonly and param.star is None and param.name == name:
                     # There is a keyword parameter by the name.
-                    symbol = self.called_function.scope[param.name]
-                    self.set_node_info(node, symbol=symbol)
-                    return symbol.get_type()
+                    symbol, type_ = self.called_function.get_parameter(param.name)
+                    self.set_node_info(node, symbol=symbol, type=type_)
+                    return type_
 
                 elif param.star == "**":
                     # There is a double-star parameter. Remember it in case the keyword
                     # parameter is not found.
-                    kwargs_symbol = self.called_function.scope[param.name]
+                    kwargs_symbol = self.called_function.get_parameter(param.name)
 
             if kwargs_symbol is not None:
                 # The argument is passed to the double-star parameter.
-                self.set_node_info(node, symbol=kwargs_symbol)
-                # TODO: Check the type of the kwargs symbol.
-                return PyType.ANY
+                symbol, type_ = kwargs_symbol
+
+                if (
+                    isinstance(type_, PyInstanceType)
+                    and type_.cls is get_stub_class("builtins.dict")
+                    and type_.type_args
+                    and len(type_.type_args) == 2
+                ):
+                    arg_type = type_.type_args[1]
+                else:
+                    arg_type = PyType.ANY
+
+                self.set_node_info(node, symbol=symbol, type=arg_type)
+                return arg_type
 
         # The keyword parameter is not found.
         self.set_node_info(node, kind=TokenKind.VARIABLE)

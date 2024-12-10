@@ -5,11 +5,13 @@ from grammar import PythonParser
 
 if TYPE_CHECKING:
     from .symbol import Symbol
+    from .types import PyType
 
 
 class TokenInfo(TypedDict, total=False):
     kind: "TokenKind"
     symbol: "Symbol"
+    type: "PyType"
 
 
 class TokenKind(Enum):

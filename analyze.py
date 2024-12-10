@@ -62,6 +62,9 @@ def get_token_entity_type(
     context: PythonContext, token: CommonToken
 ) -> Optional[PyType]:
     if token_info := context.token_info.get(token):
+        if type_ := token_info.get("type"):
+            return type_
+
         if symbol := token_info.get("symbol"):
             return symbol.get_type()
 
