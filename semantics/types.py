@@ -470,7 +470,7 @@ class PyClassType(PyInstanceBase):
             args = tuple(t.get_annotated_type() for t in key.types)
         else:
             args = (key.get_annotated_type(),)
-        return PyGenericAlias(self, args)
+        return PyGenericAlias(self.cls, args)
 
     def get_annotated_type(self) -> PyType:
         return self.cls.get_instance_type()
@@ -488,21 +488,21 @@ class PyGenericAlias(PyInstanceBase):
     The type of a generic alias, e.g. `list[int]`, `dict[str, T]`.
     """
 
-    def __init__(self, alias: PyClassType, args: PyTypeArgs):
+    def __init__(self, cls: "PyClass", args: PyTypeArgs):
         # TODO: Check the number of type arguments.
-        self.alias = alias
+        self.cls = cls
         self.args = tuple(args)
 
     def __str__(self) -> str:
-        return f"{self.alias.cls.name}[{', '.join(map(str, self.args))}]"
+        return f"{self.cls.name}[{', '.join(map(str, self.args))}]"
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} alias={self.alias!r} args={self.args!r}>"
+        return f"<{self.__class__.__name__} cls={self.cls!r} args={self.args!r}>"
 
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, PyGenericAlias)
-            and self.alias == other.alias
+            and self.cls is other.cls
             and self.args == other.args
         )
 
@@ -511,7 +511,7 @@ class PyGenericAlias(PyInstanceBase):
 
     def get_instance_type(self) -> "PyInstanceType":
         # TODO: Handle special forms.
-        return PyInstanceType(self.alias.cls, self.args)
+        return PyInstanceType(self.cls, self.args)
 
     def get_return_type(self, args: "PyArguments") -> PyType:
         return self.get_instance_type()
@@ -525,8 +525,8 @@ class PyGenericAlias(PyInstanceBase):
 
     @classmethod
     def from_stub(cls, name: str, args: PyTypeArgs) -> PyType:
-        if alias := get_stub_class(name):
-            return cls(PyClassType(alias), args)
+        if entity := get_stub_class(name):
+            return cls(entity, args)
         return PyType.ANY
 
 
@@ -983,7 +983,7 @@ class SubstituteTypeVars(PyTypeTransform):
 
         if isinstance(type, PyGenericAlias):
             args = self.visit_type_args(type.args)
-            return PyGenericAlias(type.alias, args)
+            return PyGenericAlias(type.cls, args)
 
         if isinstance(type, PyFunctionType):
             return PyFunctionType(type.func, self.mapping)
