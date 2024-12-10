@@ -743,7 +743,7 @@ class PyTupleType(PyInstanceBase):
 
     def get_type_args(self) -> Optional[PyTypeArgs]:
         # tuple[T1, ..., Tn] -> tuple[T1 | ... | Tn, ...]
-        return (PyUnionType.from_items(self.types),)
+        return (self.get_item_type(),)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
         if isinstance(key, PyLiteralType) and type(key.value) is int:
@@ -754,7 +754,7 @@ class PyTupleType(PyInstanceBase):
         if isinstance(key, PyInstanceType) and key.cls is get_stub_class(
             "builtins.int"
         ):
-            return PyUnionType.from_items(self.types)
+            return self.get_item_type()
 
         # TODO: Handle slices.
 
@@ -762,6 +762,9 @@ class PyTupleType(PyInstanceBase):
 
     def get_inferred_type(self) -> PyType:
         return PyTupleType(tuple(x.get_inferred_type() for x in self.types))
+
+    def get_item_type(self) -> PyType:
+        return PyUnionType.from_items(self.types)
 
     @staticmethod
     def from_starred(item_types: Iterable[PyType]) -> PyType:
@@ -779,11 +782,12 @@ class PyTupleType(PyInstanceBase):
         for item_type in item_types:
             if isinstance(item_type, PyUnpack):
                 if inner_types := item_type.get_unpacked_types():
-                    # Unpack the starred item if possible.
+                    # Fully unpack the starred item if possible.
                     unpacked_types.extend(inner_types)
                 else:
-                    # Otherwise, fall back to a normal tuple type.
-                    return PyInstanceType.from_stub("builtins.tuple")
+                    # Otherwise, use the common type of the unpacked items.
+                    unpacked_type = item_type.get_unpacked_type()
+                    return PyInstanceType.from_stub("builtins.tuple", (unpacked_type,))
             else:
                 # For normal items, simply add them to the tuple.
                 unpacked_types.append(item_type)
@@ -797,8 +801,9 @@ class PyUnpack(PyType):
     Wrapper type for unpacked types in star expressions.
     """
 
-    def __init__(self, inner: PyType):
+    def __init__(self, inner: PyType, kvpair: bool = False):
         self.inner = inner
+        self.kvpair = kvpair
 
     def __str__(self) -> str:
         return f"*{self.inner}"
@@ -820,6 +825,19 @@ class PyUnpack(PyType):
 
         return None
 
+    def get_unpacked_type(self) -> PyType:
+        """
+        Returns the type of any single unpacked item.
+
+        Currently, this only works for PyTupleType.
+        """
+        if isinstance(self.inner, PyTupleType):
+            return self.inner.get_item_type()
+
+        # TODO: Check if the inner type is an iterable.
+
+        return PyType.ANY
+
 
 @final
 class PyPackedTuple(PyTupleType):
@@ -834,7 +852,7 @@ class PyPackedTuple(PyTupleType):
         Converts the packed tuple to a list type.
         """
         # PackedTuple[T1, ..., Tn] -> list[T1 | ... | Tn]
-        return PyInstanceType.from_stub("builtins.list", (PyUnionType.from_items(self.types),))
+        return PyInstanceType.from_stub("builtins.list", (self.get_item_type(),))
 
 
 @final
@@ -922,6 +940,68 @@ class PyArguments:
         self.args = args if args is not None else []
         self.kwargs = kwargs if kwargs is not None else []
         self.double_stars = double_stars if double_stars is not None else []
+
+
+class PyKvPair(NamedTuple):
+    key: PyType
+    value: PyType
+
+
+PyDictDisplayItem = PyUnpack | PyKvPair
+
+
+def infer_list_display(item_types: Iterable[PyType]) -> Optional[PyTypeArgs]:
+    """
+    Infers the type arguments of a list or set display from the types of its items,
+    possibly with unpacked items. For example, [1, *(2, 3)] -> (int,).
+
+    Args:
+        item_types: The types of the items in the display.
+
+    Returns:
+        type_args: The inferred type arguments, or None if the element type cannot be
+            inferred.
+    """
+    unpacked_types: list[PyType] = []
+
+    for item_type in item_types:
+        if isinstance(item_type, PyUnpack):
+            # Unpack the starred item if possible.
+            unpacked_types.append(item_type.get_unpacked_type())
+        else:
+            # For normal items, simply add them to the tuple.
+            unpacked_types.append(item_type)
+
+    # If there are no items, the element type cannot be inferred.
+    if not unpacked_types:
+        return None
+
+    return (PyUnionType.from_items(t.get_inferred_type() for t in unpacked_types),)
+
+
+def infer_dict_display(items: Iterable[PyDictDisplayItem]) -> Optional[PyTypeArgs]:
+    """
+    Similar to `infer_type_args_from_display`, but for dictionary displays.
+    """
+    key_types: list[PyType] = []
+    value_types: list[PyType] = []
+
+    for item in items:
+        if isinstance(item, PyUnpack):
+            # TODO: If the unpacked item is a mapping, infer the key and value types.
+            key_types.append(PyType.ANY)
+            value_types.append(PyType.ANY)
+        else:
+            key_types.append(item.key)
+            value_types.append(item.value)
+
+    if not key_types:
+        return None
+
+    return (
+        PyUnionType.from_items(t.get_inferred_type() for t in key_types),
+        PyUnionType.from_items(t.get_inferred_type() for t in value_types),
+    )
 
 
 def get_type_arg_map(

@@ -23,10 +23,12 @@ from .types import (
     CollectTypeVars,
     PyArguments,
     PyClassType,
+    PyDictDisplayItem,
     PyEllipsisType,
     PyGenericAlias,
     PyInstanceType,
     PyKeywordArgument,
+    PyKvPair,
     PyLiteralType,
     PyNoneType,
     PyPackedTuple,
@@ -34,6 +36,8 @@ from .types import (
     PyType,
     PyUnpack,
     get_stub_entity,
+    infer_dict_display,
+    infer_list_display,
     set_forward_ref_evaluator,
 )
 
@@ -654,8 +658,9 @@ class PythonVisitor(PythonParserVisitor):
                 param.star = "*"
 
             elif self.pass_num == 2:
-                # TODO: respect original annotations.
-                param.type = PyInstanceType.from_stub("builtins.tuple")
+                # *args: T translates to args: tuple[T, ...]
+                type_args = (param.type,) if param.type is not None else None
+                param.type = PyInstanceType.from_stub("builtins.tuple", type_args)
 
         elif node := ctx.paramNoDefaultStarAnnotation():
             parameters.append(param := self.visitParamNoDefaultStarAnnotation(node))
@@ -679,8 +684,12 @@ class PythonVisitor(PythonParserVisitor):
             param.star = "**"
 
         elif self.pass_num == 2:
-            # TODO: respect original annotations.
-            param.type = PyInstanceType.from_stub("builtins.dict")
+            # **kwargs: V translates to kwargs: dict[str, V]
+            type_args = (
+                PyInstanceType.from_stub("builtins.str"),
+                param.type if param.type is not None else PyType.ANY,
+            )
+            param.type = PyInstanceType.from_stub("builtins.dict", type_args)
 
         return param
 
@@ -1347,10 +1356,12 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitList(self, ctx: PythonParser.ListContext) -> PyType:
         if expressions := ctx.starNamedExpressions():
-            self.visitStarNamedExpressions(expressions)
+            item_types = self.visitStarNamedExpressions(expressions)
+        else:
+            item_types = []
 
-        # TODO: literals
-        return PyInstanceType.from_stub("builtins.list")
+        type_args = infer_list_display(item_types)
+        return PyInstanceType.from_stub("builtins.list", type_args)
 
     # tuple: '(' (starNamedExpression ',' starNamedExpressions?)? ')';
     @_type_check
@@ -1370,20 +1381,54 @@ class PythonVisitor(PythonParserVisitor):
     @_type_check
     @_visitor_guard
     def visitSet(self, ctx: PythonParser.SetContext) -> PyType:
-        self.visitStarNamedExpressions(ctx.starNamedExpressions())
+        item_types = self.visitStarNamedExpressions(ctx.starNamedExpressions())
 
-        # TODO: literals
-        return PyInstanceType.from_stub("builtins.set")
+        type_args = infer_list_display(item_types)
+        return PyInstanceType.from_stub("builtins.set", type_args)
 
     # dict: '{' doubleStarredKvpairs? '}';
     @_type_check
     @_visitor_guard
     def visitDict(self, ctx: PythonParser.DictContext) -> PyType:
         if kvpairs := ctx.doubleStarredKvpairs():
-            self.visitDoubleStarredKvpairs(kvpairs)
+            item_types = self.visitDoubleStarredKvpairs(kvpairs)
+        else:
+            item_types = []
 
-        # TODO: literals
-        return PyInstanceType.from_stub("builtins.dict")
+        type_args = infer_dict_display(item_types)
+        return PyInstanceType.from_stub("builtins.dict", type_args)
+
+    # doubleStarredKvpairs
+    #   : doubleStarredKvpair (',' doubleStarredKvpair)* ','?;
+    @_visitor_guard
+    def visitDoubleStarredKvpairs(
+        self, ctx: PythonParser.DoubleStarredKvpairsContext
+    ) -> list[PyDictDisplayItem]:
+        return [
+            self.visitDoubleStarredKvpair(node) for node in ctx.doubleStarredKvpair()
+        ]
+
+    # doubleStarredKvpair
+    #   : '**' bitwise
+    #   | kvpair;
+    @_type_check
+    @_visitor_guard
+    def visitDoubleStarredKvpair(
+        self, ctx: PythonParser.DoubleStarredKvpairContext
+    ) -> PyDictDisplayItem:
+        if ctx.DOUBLESTAR():
+            return PyUnpack(self.visitBitwise(ctx.bitwise()), kvpair=True)
+        else:
+            return self.visitKvpair(ctx.kvpair())
+
+    # kvpair: expression ':' expression;
+    @_type_check
+    @_visitor_guard
+    def visitKvpair(self, ctx: PythonParser.KvpairContext) -> PyKvPair:
+        key_type = self.visitExpression(ctx.expression(0))
+        value_type = self.visitExpression(ctx.expression(1))
+
+        return PyKvPair(key_type, value_type)
 
     # forIfClauses: forIfClause+;
     @_visitor_guard
@@ -1620,14 +1665,13 @@ class PythonVisitor(PythonParserVisitor):
                         star_index = i
 
             # Try to determine the types of the unpacked values.
-            if (
-                unpacked_types := PyUnpack(value_type).get_unpacked_types()
-            ) is not None:
+            unpack = PyUnpack(value_type)
+            if (unpacked_types := unpack.get_unpacked_types()) is not None:
                 self.handle_star_targets_unpacked(ctx, star_index, unpacked_types)
 
             else:
-                # TODO: Also check if the value to unpack is an iterable.
-                self.handle_star_targets_any(ctx, star_index)
+                unpacked_type = unpack.get_unpacked_type()
+                self.handle_star_targets_homogenous(ctx, star_index, unpacked_type)
 
         else:
             # Otherwise, the value is directly assigned to the single target.
@@ -1711,21 +1755,25 @@ class PythonVisitor(PythonParserVisitor):
 
                 self.visitStarTarget(star_target, value_type=value_type)
 
-    def handle_star_targets_any(
-        self, ctx: PythonParser.StarTargetsContext, star_index: Optional[int]
+    def handle_star_targets_homogenous(
+        self,
+        ctx: PythonParser.StarTargetsContext,
+        star_index: Optional[int],
+        value_type: PyType,
     ):
         """
-        Helper method to handle the assignment of Any to starred targets.
+        Helper method to handle the assignment of homogenous values to starred targets.
         """
         for i, star_target in enumerate(ctx.starTarget()):
             if star_index is not None and i == star_index:
                 # The starred target receives a list of the remaining values.
                 self.visitStarTarget(
-                    star_target, value_type=PyInstanceType.from_stub("builtins.list")
+                    star_target,
+                    value_type=PyInstanceType.from_stub("builtins.list", (value_type,)),
                 )
             else:
-                # We do not know the type of other targets.
-                self.visitStarTarget(star_target, value_type=PyType.ANY)
+                # Otherwise, the target receives the value directly.
+                self.visitStarTarget(star_target, value_type=value_type)
 
     @staticmethod
     def convert_packed_tuple(value_type: PyType) -> PyType:
