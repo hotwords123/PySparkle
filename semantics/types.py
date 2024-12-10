@@ -466,10 +466,13 @@ class PyClassType(PyInstanceBase):
         return PyInstanceType(self.cls)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
-        if isinstance(key, PyTupleType):
-            args = tuple(t.get_annotated_type() for t in key.types)
-        else:
-            args = (key.get_annotated_type(),)
+        args = key.types if isinstance(key, PyTupleType) else (key,)
+
+        # In the form Literal[X], X is interpreted as a literal value, not a type
+        # annotation. We need to handle this special case here.
+        if self.cls is not get_stub_class("typing.Literal"):
+            args = tuple(t.get_annotated_type() for t in args)
+
         return PyGenericAlias(self.cls, args)
 
     def get_annotated_type(self) -> PyType:
@@ -521,6 +524,28 @@ class PyGenericAlias(PyInstanceBase):
         return PyType.ANY
 
     def get_annotated_type(self) -> PyType:
+        # Check if the alias is a special form.
+        if self.cls is get_stub_class("typing.Union"):
+            if self.args:
+                return PyUnionType.from_items(self.args)
+            else:
+                # TODO: Report an error.
+                return PyType.ANY
+
+        elif self.cls is get_stub_class("typing.Optional"):
+            if len(self.args) == 1:
+                return PyUnionType.optional(self.args[0])
+            else:
+                # TODO: Report an error.
+                return PyType.ANY
+
+        elif self.cls is get_stub_class("typing.Literal"):
+            if all(isinstance(x, PyLiteralType) for x in self.args):
+                return PyUnionType.from_items(self.args)
+            else:
+                # TODO: Report an error.
+                return PyType.ANY
+
         return self.get_instance_type()
 
     @classmethod
@@ -716,11 +741,9 @@ class PyTupleType(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class("builtins.tuple", dummy=True)
 
-    def get_type_args(self) -> Optional[Iterable[PyType]]:
-        # TODO: Return a union of all enclosed types.
-        if self.types and all(t == self.types[0] for t in self.types):
-            return (self.types[0],)
-        return None
+    def get_type_args(self) -> Optional[PyTypeArgs]:
+        # tuple[T1, ..., Tn] -> tuple[T1 | ... | Tn, ...]
+        return (PyUnionType.from_items(self.types),)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
         if isinstance(key, PyLiteralType) and type(key.value) is int:
@@ -731,11 +754,11 @@ class PyTupleType(PyInstanceBase):
         if isinstance(key, PyInstanceType) and key.cls is get_stub_class(
             "builtins.int"
         ):
-            "TODO: Return the union of all types."
+            return PyUnionType.from_items(self.types)
 
         # TODO: Handle slices.
 
-        return PyType.ANY
+        return super().get_subscripted_type(key)
 
     def get_inferred_type(self) -> PyType:
         return PyTupleType(tuple(x.get_inferred_type() for x in self.types))
@@ -810,8 +833,77 @@ class PyPackedTuple(PyTupleType):
         """
         Converts the packed tuple to a list type.
         """
-        # TODO: Return a generic list of the union of all types once implemented.
-        return PyInstanceType.from_stub("builtins.list")
+        # PackedTuple[T1, ..., Tn] -> list[T1 | ... | Tn]
+        return PyInstanceType.from_stub("builtins.list", (PyUnionType.from_items(self.types),))
+
+
+@final
+class PyUnionType(PyType):
+    """
+    A union type in the form of `Union[T1, T2, ...]`.
+    """
+
+    def __init__(self, items: tuple[PyType, ...]):
+        """
+        Creates a union type from the given types.
+
+        In most cases, do not use this constructor directly. Instead, use `from_items`.
+        """
+        self.items = items
+
+    def __str__(self) -> str:
+        return " | ".join(map(str, self.items))
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} items={self.items!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyUnionType) and self.items == other.items
+
+    # TODO: Implement the rest of the methods, or the union type will behave like Any.
+
+    @staticmethod
+    def from_items(items: Iterable[PyType]) -> PyType:
+        """
+        Creates a union type from the given types. This method is used to handle
+        duplicate types and nested unions. Also, it returns a single type if the union
+        contains only one type.
+
+        Args:
+            items: The types to include in the union.
+
+        Returns:
+            The union type.
+        """
+        unique_items: list[PyType] = []
+
+        for item in items:
+            if isinstance(item, PyUnionType):
+                unique_items.extend(item.items)
+            elif item not in unique_items:
+                unique_items.append(item)
+
+        if not unique_items:
+            # TODO: Union should contain at least one type. Report an error.
+            return PyType.ANY
+
+        if len(unique_items) == 1:
+            return unique_items[0]
+
+        return PyUnionType(tuple(unique_items))
+
+    @staticmethod
+    def optional(item: PyType) -> PyType:
+        """
+        Creates an optional type Optional[T] from the given type T.
+
+        Args:
+            item: The type to make optional.
+
+        Returns:
+            The optional type.
+        """
+        return PyUnionType.from_items((item, PyNoneType()))
 
 
 class PyKeywordArgument(NamedTuple):
@@ -922,6 +1014,9 @@ class CollectTypeVars:
         if isinstance(type, PyTupleType):
             return self.visit_type_args(type.types)
 
+        if isinstance(type, PyUnionType):
+            return self.visit_type_args(type.items)
+
     def visit_type_args(self, type_args: Optional[PyTypeArgs]) -> None:
         if type_args is None:
             return
@@ -991,5 +1086,9 @@ class SubstituteTypeVars(PyTypeTransform):
         if isinstance(type, PyTupleType):
             types = tuple(self.visit_type(t) for t in type.types)
             return PyTupleType(types)
+
+        if isinstance(type, PyUnionType):
+            items = tuple(self.visit_type(t) for t in type.items)
+            return PyUnionType.from_items(items)
 
         return type
