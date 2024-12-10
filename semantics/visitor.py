@@ -11,20 +11,22 @@ from .base import SemanticError
 from .entity import PyClass, PyFunction, PyLambda, PyParameter, PyTypeError
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
-    PyArguments,
     PyImportFrom,
     PyImportFromAsName,
     PyImportFromTargets,
     PyImportName,
-    PyKeywordArgument,
     PythonContext,
 )
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
 from .types import (
+    CollectTypeVars,
+    PyArguments,
     PyClassType,
     PyEllipsisType,
+    PyGenericAlias,
     PyInstanceType,
+    PyKeywordArgument,
     PyLiteralType,
     PyNoneType,
     PyPackedTuple,
@@ -465,14 +467,20 @@ class PythonVisitor(PythonParserVisitor):
 
             # Handle class arguments.
             entity.arguments = arguments
+
             # NOTE: In theory, we should handle starred arguments here, but in
             # practice, syntaxes like `class C(*args):` are hardly ever used.
-            entity.bases.extend(
-                arg.cls for arg in arguments.args if isinstance(arg, PyClassType)
-            )
+            visitor = CollectTypeVars()
 
-            with self.context.wrap_errors(PyTypeError):
-                entity.compute_mro()
+            for arg in arguments.args:
+                if isinstance(arg, PyClassType):
+                    entity.bases.append(PyInstanceType(arg.cls))
+                elif isinstance(arg, PyGenericAlias):
+                    # TODO: Verify that the generic alias is a valid base class.
+                    entity.bases.append(arg.get_instance_type())
+                    visitor.visit_type_args(arg.args)
+
+            entity.type_params.extend(visitor.type_vars)
 
         with self.context.scope_guard(scope):
             if type_params := ctx.typeParams():
@@ -1018,17 +1026,19 @@ class PythonVisitor(PythonParserVisitor):
         elif genexp := ctx.genexp():
             # Function call with generator expression
             with self.context.set_called_function(type_):
-                self.visitGenexp(genexp)
+                arg_type = self.visitGenexp(genexp)
 
-            return type_.get_return_type()
+            return type_.get_return_type(PyArguments(args=[arg_type]))
 
         else:
             # Function call
             if arguments := ctx.arguments():
                 with self.context.set_called_function(type_):
-                    self.visitArguments(arguments)
+                    args = self.visitArguments(arguments)
+            else:
+                args = PyArguments()
 
-            return type_.get_return_type()
+            return type_.get_return_type(args)
 
     # slices: slice (',' slice)* ','?;
     @_type_check
@@ -1066,7 +1076,7 @@ class PythonVisitor(PythonParserVisitor):
             stop = self.visit_maybe_expression(ctx.stopExpr)
             step = self.visit_maybe_expression(ctx.stepExpr)
 
-            return PyInstanceType.from_stub("builtins.slice")
+            return PyInstanceType.from_stub("builtins.slice", (start, stop, step))
 
     def visit_maybe_expression(
         self, ctx: Optional[PythonParser.ExpressionContext]

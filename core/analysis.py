@@ -1,8 +1,8 @@
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Final, Optional
 
-from semantics.entity import PyModule, PyPackage
+from semantics.entity import PyClass, PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
@@ -12,12 +12,30 @@ from semantics.visitor import PythonVisitor
 from .modules import ModuleManager, PyImportError
 from .source import PythonSource
 
+# Special forms that require special handling in the Python analyzer.
+special_form_names: Final = {
+    "typing": {
+        "Union",
+        "Generic",
+        "Protocol",
+        "Callable",
+        "Type",
+        "NoReturn",
+        "ClassVar",
+        "Optional",
+        "Tuple",
+        "Final",
+        "Literal",
+    },
+}
+
 
 class PythonAnalyzer:
-    def __init__(self, search_paths: list[Path]):
+    def __init__(self, search_paths: list[Path], report_errors: bool = True):
         self.builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
         self.type_stubs: dict[str, SymbolTable] = {}
         self.importer = ModuleManager(search_paths, self.load_module)
+        self.report_errors = report_errors
         self.typeshed_loaded = False
         self.pending_second_pass: list[PyModule] = []
 
@@ -41,8 +59,24 @@ class PythonAnalyzer:
             if self.typeshed_loaded:
                 with self.set_type_context():
                     visitor.second_pass(module.source.tree)
+                self.report_module_errors(module)
             else:
                 self.pending_second_pass.append(module)
+
+    def report_module_errors(self, module: PyModule):
+        """
+        Reports the errors within a Python module.
+        """
+        if not self.report_errors:
+            return
+
+        if module.context.errors:
+            print(f"In {module}:", file=sys.stderr)
+
+            for error in module.context.errors:
+                print(f"  {error}", file=sys.stderr)
+
+            print(file=sys.stderr)
 
     def build_global_scope(self, module: PyModule) -> SymbolTable:
         """
@@ -57,6 +91,16 @@ class PythonAnalyzer:
 
         scope.define(Symbol(SymbolType.VARIABLE, "__doc__"))
         scope.define(Symbol(SymbolType.VARIABLE, "__annotations__"))
+
+        if module.name in special_form_names:
+            # Define special forms as classes in the global scope.
+            # This is a hack to make the subscript syntax work for them.
+            for name in special_form_names[module.name]:
+                cls_scope = SymbolTable(f"<special form '{name}'>", ScopeType.CLASS)
+                cls = PyClass(name, cls_scope)
+                cls.modifiers.add("special")
+                symbol = Symbol(SymbolType.CLASS, name, entity=cls)
+                scope.define(symbol)
 
         return scope
 
@@ -226,6 +270,7 @@ class PythonAnalyzer:
             for module in self.pending_second_pass:
                 visitor = PythonVisitor(module.context)
                 visitor.second_pass(module.source.tree)
+                self.report_module_errors(module)
 
         self.pending_second_pass.clear()
 

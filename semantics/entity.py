@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Iterator, Literal, Optional
 
 from .scope import ScopeType, SymbolTable
 from .types import (
+    PyArguments,
     PyClassType,
     PyEllipsisType,
     PyFunctionType,
@@ -12,6 +13,7 @@ from .types import (
     PyNoneType,
     PySelfType,
     PyType,
+    PyTypeVar,
     get_stub_class,
 )
 
@@ -19,7 +21,7 @@ if TYPE_CHECKING:
     from core.source import PythonSource
     from grammar import PythonParser
 
-    from .structure import PyArguments, PythonContext
+    from .structure import PythonContext
 
 
 class PyEntity(ABC):
@@ -112,8 +114,9 @@ class PyClass(_ModifiersMixin, PyEntity):
         self.scope = scope
         self.instance_scope = SymbolTable(f"<object '{name}'>", ScopeType.OBJECT)
         self.decorators: list[PyType] = []
-        self.arguments: Optional["PyArguments"] = None
-        self.bases: list[PyClass] = []
+        self.arguments: Optional[PyArguments] = None
+        self.bases: list[PyInstanceType] = []
+        self.type_params: list[PyTypeVar] = []
 
         self._mro: Optional[list[PyClass]] = None
         self._computing_mro = False
@@ -198,16 +201,11 @@ class PyClass(_ModifiersMixin, PyEntity):
         # Collect the MROs of the base classes.
         mro_lists: list[list[PyClass]] = []
         for base in self.bases:
-            if not base.mro:
-                raise PyTypeError(
-                    f"Cannot inherit from base class {base.name!r} before it is defined"
-                    f" (in class {self.name!r})"
-                )
-            mro_lists.append(base.mro.copy())
+            mro_lists.append(base.cls.mro.copy())
 
         # Add the base classes to preserve the orderings.
         if self.bases:
-            mro_lists.append([base for base in self.bases])
+            mro_lists.append([base.cls for base in self.bases])
 
         # The MRO always starts with the class itself.
         result: list[PyClass] = [self]

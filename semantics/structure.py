@@ -170,8 +170,9 @@ class PythonContext:
             value_type: The type of the attribute value (optional).
             override_type: Whether to override the existing attribute type.
         """
-        if symbol := on_type.get_attr(name):
+        if attr := on_type.get_attr(name):
             # If the attribute exists, the target is an attribute.
+            symbol, _ = attr
             self.set_node_info(node, symbol=symbol)
             if value_type is not None:
                 self.set_variable_type(symbol, value_type, override=override_type)
@@ -201,9 +202,10 @@ class PythonContext:
         Returns:
             type: The type of the attribute.
         """
-        if symbol := on_type.get_attr(name):
+        if attr := on_type.get_attr(name):
+            symbol, type_ = attr
             self.set_node_info(node, symbol=symbol)
-            return symbol.get_type()
+            return type_
 
         else:
             self.set_node_info(node, kind=TokenKind.FIELD)
@@ -336,15 +338,3 @@ class PyImportFromAsName(NamedTuple):
     name: str
     alias: Optional[str]
     symbol: Symbol
-
-
-@dataclasses.dataclass
-class PyArguments:
-    args: list["PyType"] = dataclasses.field(default_factory=list)
-    kwargs: list["PyKeywordArgument"] = dataclasses.field(default_factory=list)
-    double_stars: list["PyType"] = dataclasses.field(default_factory=list)
-
-
-class PyKeywordArgument(NamedTuple):
-    name: str
-    type: PyType
