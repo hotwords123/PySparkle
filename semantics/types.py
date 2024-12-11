@@ -594,6 +594,14 @@ class PyInstanceType(PyInstanceBase):
 
 @final
 class PySelfType(PyInstanceType):
+    def __init__(self, cls: "PyClass"):
+        # The `self` type is generic if the class has type parameters.
+        if cls.type_params:
+            type_args = tuple(PyTypeVarType(t) for t in cls.type_params)
+        else:
+            type_args = None
+        super().__init__(cls, type_args)
+
     def __str__(self) -> str:
         return f"Self@{super().__str__()}"
 
