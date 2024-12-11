@@ -513,11 +513,7 @@ class PythonVisitor(PythonParserVisitor):
             else:
                 cls = None
 
-            scope = self.context.new_scope(
-                ctx,
-                f"<{'function' if cls is None else 'method'} '{name}'>",
-                ScopeType.LOCAL,
-            )
+            scope = self.context.new_scope(ctx, f"{name}.<locals>", ScopeType.LOCAL)
 
             entity = PyFunction(name, scope, cls=cls)
             self.context.entities[ctx] = entity
@@ -1128,7 +1124,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitLambdef(self, ctx: PythonParser.LambdefContext) -> Optional[PyType]:
         if self.pass_num == 1:
-            scope = self.context.new_scope(ctx, "<lambda>", ScopeType.LAMBDA)
+            scope = self.context.new_scope(ctx, "<lambda>.<locals>", ScopeType.LOCAL)
             entity = PyLambda(scope)
             self.context.entities[ctx] = entity
         else:
@@ -1492,7 +1488,7 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitGenexp(self, ctx: PythonParser.GenexpContext) -> Optional[PyType]:
         if self.pass_num == 1:
-            scope = self.context.new_scope(ctx, "<genexp>", ScopeType.COMPREHENSION)
+            scope = self.context.new_scope(ctx, "<genexpr>", ScopeType.COMPREHENSION)
         else:
             scope = self.context.scope_of(ctx)
 
