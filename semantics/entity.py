@@ -266,6 +266,9 @@ class PyFunction(_ModifiersMixin, PyEntity):
 
         self.init_modifiers()
 
+        # Overloaded functions.
+        self.overloads: list[PyFunction] = []
+
     def __str__(self) -> str:
         if self.is_method:
             if self.has_modifier("property"):

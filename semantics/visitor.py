@@ -509,13 +509,19 @@ class PythonVisitor(PythonParserVisitor):
             entity = PyFunction(name, scope, cls=self.context.parent_class)
             self.context.entities[ctx] = entity
 
-            symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)
+            if (symbol := self.context.current_scope.get(name)) and isinstance(
+                prev_func := symbol.entity, PyFunction
+            ):
+                # Handle function overloading.
+                prev_func.overloads.append(entity)
+            else:
+                symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)
+                with self.context.wrap_errors(PyDuplicateSymbolError):
+                    self.context.current_scope.define(symbol)
+
             self.context.set_node_info(
                 name_node, kind=TokenKind.FUNCTION, symbol=symbol
             )
-
-            with self.context.wrap_errors(PyDuplicateSymbolError):
-                self.context.current_scope.define(symbol)
 
         else:
             scope = self.context.scope_of(ctx)
