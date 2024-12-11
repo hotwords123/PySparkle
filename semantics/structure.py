@@ -54,13 +54,19 @@ class PythonContext:
             self.current_scope = old_scope
 
     def new_scope(
-        self, ctx: ParserRuleContext, name: str, scope_type: ScopeType
+        self,
+        ctx: ParserRuleContext,
+        name: str,
+        scope_type: ScopeType,
+        full_name: Optional[str] = None,
     ) -> SymbolTable:
         parent_scope = self.current_scope
+        if full_name is None:
+            full_name = f"{parent_scope.full_name}.{name}"
         if parent_scope.scope_type is ScopeType.CLASS:
             parent_scope = parent_scope.parent
 
-        scope = SymbolTable(name, scope_type, parent_scope)
+        scope = SymbolTable(name, scope_type, parent_scope, full_name=full_name)
         self.scopes[ctx] = scope
         return scope
 

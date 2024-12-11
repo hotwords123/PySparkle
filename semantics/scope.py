@@ -19,9 +19,15 @@ class ScopeType(Enum):
 
 class SymbolTable:
     def __init__(
-        self, name: str, scope_type: ScopeType, parent: Optional["SymbolTable"] = None
+        self,
+        name: str,
+        scope_type: ScopeType,
+        parent: Optional["SymbolTable"] = None,
+        *,
+        full_name: Optional[str] = None,
     ):
         self.name = name
+        self.full_name = full_name or name
         self.scope_type = scope_type
         self.parent = parent
         self.symbols: dict[str, Symbol] = {}
@@ -46,6 +52,7 @@ class SymbolTable:
         if symbol.name in self.symbols:
             raise PyDuplicateSymbolError(symbol, self)
         self.symbols[symbol.name] = symbol
+        symbol.set_parent_scope(self)
         # print(f"Defined symbol {symbol.name} in scope {self.name}")
 
     def lookup(

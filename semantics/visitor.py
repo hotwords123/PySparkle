@@ -448,7 +448,7 @@ class PythonVisitor(PythonParserVisitor):
             arguments = PyArguments()
 
         if self.pass_num == 1:
-            scope = self.context.new_scope(ctx, f"<class '{name}'>", ScopeType.CLASS)
+            scope = self.context.new_scope(ctx, name, ScopeType.CLASS)
             entity = PyClass(name, scope)
             self.context.entities[ctx] = entity
 
@@ -506,8 +506,6 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            scope = self.context.new_scope(ctx, f"<function '{name}'>", ScopeType.LOCAL)
-
             # Find the class that the function is defined in.
             if self.context.current_scope.scope_type is ScopeType.CLASS:
                 node = ctx.parentCtx
@@ -516,6 +514,12 @@ class PythonVisitor(PythonParserVisitor):
                 cls = self.context.entities[node]
             else:
                 cls = None
+
+            scope = self.context.new_scope(
+                ctx,
+                f"<{'function' if cls is None else 'method'} '{name}'>",
+                ScopeType.LOCAL,
+            )
 
             entity = PyFunction(name, scope, cls=cls)
             self.context.entities[ctx] = entity

@@ -6,6 +6,7 @@ from antlr4.tree.Tree import TerminalNode
 
 if TYPE_CHECKING:
     from .entity import PyEntity
+    from .scope import SymbolTable
     from .types import PyType
 
 
@@ -29,6 +30,7 @@ class Symbol:
         public: Optional[bool] = None,
         target: Optional["Symbol"] = None,
         entity: Optional["PyEntity"] = None,
+        full_name: Optional[str] = None,
     ):
         self.name = name
         self.type = type
@@ -39,12 +41,35 @@ class Symbol:
 
         self.target = target
         self.entity = entity
+        self._full_name = full_name
+
+        self.set_entity_name()
 
     def __str__(self):
         return self.name
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} type={self.type}>"
+
+    @property
+    def full_name(self) -> str:
+        """
+        Returns the fully-qualified name of the symbol.
+        """
+        return self._full_name or self.name
+
+    def set_parent_scope(self, scope: "SymbolTable"):
+        if self._full_name is None:
+            self._full_name = f"{scope.full_name}.{self.name}"
+            self.set_entity_name()
+
+    def set_entity(self, entity: "PyEntity"):
+        self.entity = entity
+        self.set_entity_name()
+
+    def set_entity_name(self):
+        if self.entity is not None and self._full_name is not None:
+            self.entity.set_full_name(self.full_name)
 
     def copy(
         self,

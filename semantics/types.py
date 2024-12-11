@@ -103,7 +103,7 @@ def get_stub_class(name: str, dummy: bool = False) -> Optional["PyClass"]:
             return _dummy_classes[name]
 
         cls_name = name.rsplit(".", 1)[-1]
-        dummy_scope = SymbolTable(f"<class '{cls_name}'>", ScopeType.CLASS)
+        dummy_scope = SymbolTable(cls_name, ScopeType.CLASS, full_name=name)
         dummy_cls = PyClass(cls_name, dummy_scope)
         _dummy_classes[name] = dummy_cls
         return dummy_cls

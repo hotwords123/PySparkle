@@ -32,7 +32,7 @@ special_form_names: Final = {
 
 class PythonAnalyzer:
     def __init__(self, search_paths: list[Path], report_errors: bool = True):
-        self.builtin_scope = SymbolTable("<builtins>", ScopeType.BUILTINS)
+        self.builtin_scope = SymbolTable("builtins", ScopeType.BUILTINS)
         self.type_stubs: dict[str, SymbolTable] = {}
         self.importer = ModuleManager(search_paths, self.load_module)
         self.report_errors = report_errors
@@ -82,9 +82,7 @@ class PythonAnalyzer:
         """
         Builds the global scope for a Python module.
         """
-        scope = SymbolTable(
-            f"<module {module.name!r}>", ScopeType.GLOBAL, self.builtin_scope
-        )
+        scope = SymbolTable(module.name, ScopeType.GLOBAL, self.builtin_scope)
 
         # Define the built-in symbols on module objects.
         # https://docs.python.org/3/library/stdtypes.html#module-objects
@@ -96,7 +94,9 @@ class PythonAnalyzer:
             # Define special forms as classes in the global scope.
             # This is a hack to make the subscript syntax work for them.
             for name in special_form_names[module.name]:
-                cls_scope = SymbolTable(f"<special form '{name}'>", ScopeType.CLASS)
+                cls_scope = SymbolTable(
+                    name, ScopeType.CLASS, full_name=f"{module.name}.{name}"
+                )
                 cls = PyClass(name, cls_scope)
                 cls.modifiers.add("special")
                 symbol = Symbol(SymbolType.CLASS, name, entity=cls)
@@ -135,13 +135,13 @@ class PythonAnalyzer:
         if stmt.alias is not None:
             # If an alias is provided, the symbol refers to the imported
             # module object.
-            stmt.symbol.entity = imported_module
+            stmt.symbol.set_entity(imported_module)
 
         else:
             # Otherwise, the symbol refers to the top-level module object,
             # and the submodules are imported as attributes.
             module = self.importer[stmt.path[0]]
-            stmt.symbol.entity = module
+            stmt.symbol.set_entity(module)
 
             for name in stmt.path[1:]:
                 module = self.import_and_define_module(module, name)
@@ -195,8 +195,8 @@ class PythonAnalyzer:
                         and target_symbol.resolve_entity() is None
                     ):
                         with context.wrap_errors(PyImportError):
-                            symbol.entity = self.importer.import_module(
-                                f"{base_name}.{name}"
+                            symbol.set_entity(
+                                self.importer.import_module(f"{base_name}.{name}")
                             )
 
                 elif self.import_and_define_module(imported_module, name):

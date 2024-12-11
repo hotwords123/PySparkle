@@ -29,8 +29,20 @@ class PyEntity(ABC):
     A Python entity.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, full_name: Optional[str] = None):
         self.name = name
+        self._full_name = full_name
+
+    @property
+    def full_name(self) -> str:
+        """
+        Returns the fully-qualified name of the entity.
+        """
+        return self._full_name or self.name
+
+    def set_full_name(self, full_name: str):
+        if self._full_name is None:
+            self._full_name = full_name
 
     @abstractmethod
     def __str__(self) -> str:
@@ -57,7 +69,7 @@ class PyModule(PyEntity):
             name: The fully qualified module name.
             path: The path to the module file.
         """
-        super().__init__(name)
+        super().__init__(name, full_name=name)
         self.path = path
 
         self.source: Optional[PythonSource] = None
@@ -112,7 +124,9 @@ class PyClass(_ModifiersMixin, PyEntity):
     def __init__(self, name: str, scope: "SymbolTable"):
         super().__init__(name)
         self.scope = scope
-        self.instance_scope = SymbolTable(f"<object '{name}'>", ScopeType.OBJECT)
+        self.instance_scope = SymbolTable(
+            "<members>", ScopeType.OBJECT, full_name=f"{scope.full_name}.<members>"
+        )
         self.decorators: list[PyType] = []
         self.arguments: Optional[PyArguments] = None
         self.bases: list[PyInstanceType] = []
