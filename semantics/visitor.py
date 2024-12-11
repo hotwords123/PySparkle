@@ -32,6 +32,7 @@ from .types import (
     PyPackedTuple,
     PyTupleType,
     PyType,
+    PyUnionType,
     PyUnpack,
     infer_dict_display,
     infer_list_display,
@@ -234,6 +235,20 @@ class PythonVisitor(PythonParserVisitor):
 
         for star_targets in ctx.starTargets():
             self.visitStarTargets(star_targets, value_type=type_)
+
+    # returnStmt: 'return' starExpressions?;
+    @_type_check
+    @_visitor_guard
+    def visitReturnStmt(self, ctx: PythonParser.ReturnStmtContext):
+        type_ = self.visitStarExpressions(ctx.starExpressions())
+
+        if self.context.current_scope.scope_type is ScopeType.LOCAL:
+            self.context.parent_function.returned_types.append(type_)
+
+        else:
+            self.context.errors.append(
+                SemanticError("'return' outside function", ctx.start, ctx.stop)
+            )
 
     # globalStmt: 'global' NAME (',' NAME)*;
     @_first_pass_only
@@ -569,8 +584,14 @@ class PythonVisitor(PythonParserVisitor):
                             # Instance methods have a `self` parameter.
                             first_param.type = entity.cls.get_self_type()
 
-        with self.context.scope_guard(scope):
-            self.visitBlock(ctx.block())
+            with self.context.scope_guard(scope):
+                self.visitBlock(ctx.block())
+
+            if self.pass_num == 2 and entity.return_type is None:
+                # Infer the return type of the function.
+                returned_types = [t.get_inferred_type() for t in entity.returned_types]
+                returned_types.append(PyType.NONE)
+                entity.return_type = PyUnionType.from_items(returned_types)
 
     # parameters
     #   : slashNoDefault (',' paramNoDefault)* (',' paramWithDefault)*

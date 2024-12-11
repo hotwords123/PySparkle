@@ -267,6 +267,9 @@ class PyFunction(_ModifiersMixin, PyEntity):
         # Overloaded functions.
         self.overloads: list[PyFunction] = []
 
+        # The types returned by a return statement. Used for type inference.
+        self.returned_types: list[PyType] = []
+
     def __str__(self) -> str:
         if self.is_method:
             if self.has_modifier("property"):
