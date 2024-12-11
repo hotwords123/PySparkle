@@ -471,7 +471,11 @@ class PyClassType(PyInstanceBase):
         # In the form Literal[X], X is interpreted as a literal value, not a type
         # annotation. We need to handle this special case here.
         if self.cls is not get_stub_class("typing.Literal"):
-            args = tuple(t.get_annotated_type() for t in args)
+            # Keep the ellipsis type as is.
+            args = tuple(
+                t if isinstance(t, PyEllipsisType) else t.get_annotated_type()
+                for t in args
+            )
 
         return PyGenericAlias(self.cls, args)
 
@@ -513,7 +517,14 @@ class PyGenericAlias(PyInstanceBase):
         return get_stub_class("types.GenericAlias", dummy=True)
 
     def get_instance_type(self) -> "PyInstanceType":
-        # TODO: Handle special forms.
+        if self.cls is get_stub_class("builtins.tuple"):
+            if len(self.args) == 2 and isinstance(self.args[1], PyEllipsisType):
+                # A homogeneous tuple type is represented as tuple[T, ...].
+                return PyInstanceType(self.cls, (self.args[0],))
+            else:
+                # A tuple type with multiple items is represented as tuple[T1, ..., Tn].
+                return PyTupleType(self.args)
+
         return PyInstanceType(self.cls, self.args)
 
     def get_return_type(self, args: "PyArguments") -> PyType:
@@ -570,7 +581,14 @@ class PyInstanceType(PyInstanceBase):
     def __str__(self) -> str:
         name = self.cls.name
         if self.type_args:
-            name += f"[{', '.join(map(str, self.type_args))}]"
+            if (
+                self.cls is get_stub_class("builtins.tuple")
+                and len(self.type_args) == 1
+            ):
+                # A homogeneous tuple type is represented as tuple[T, ...].
+                name += f"[{self.type_args[0]}, ...]"
+            else:
+                name += f"[{', '.join(map(str, self.type_args))}]"
         return name
 
     def __repr__(self) -> str:
@@ -730,6 +748,11 @@ class PyLiteralType(PyInstanceBase):
 
 
 class PyTupleType(PyInstanceBase):
+    """
+    A tuple type in the form of `tuple[T1, ..., Tn]`. Note that the homogeneous tuple
+    type `tuple[T, ...]` is handled by PyInstanceType with type argument (T,).
+    """
+
     def __init__(self, types: Iterable[PyType]):
         """
         Creates a tuple type from the given types. The types must not contain PyUnpack.

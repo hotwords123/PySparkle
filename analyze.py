@@ -73,7 +73,6 @@ def get_token_entity_type(
 
 def main(args):
     source_path = Path(args.input)
-    out_file = open(args.output, "w", newline="") if args.output else sys.stdout
 
     assert "." not in source_path.stem, "source file name should not contain '.'"
 
@@ -97,10 +96,21 @@ def main(args):
     module = PyModule(source_path.stem, source_path)
     analyzer.importer.load_module(module)
 
-    token_source = (module.source.lexer, module.source.input_stream)
-
     for error in module.context.errors:
         print(error, file=sys.stderr)
+
+    with analyzer.set_type_context():
+        doc = generate_html(module)
+
+    if args.output:
+        with open(args.output, "w", newline="") as f:
+            print(doc, file=f)
+    else:
+        print(doc, file=sys.stdout)
+
+
+def generate_html(module: PyModule) -> dominate.document:
+    token_source = (module.source.lexer, module.source.input_stream)
 
     doc = dominate.document(title="Python Code")
 
@@ -141,10 +151,7 @@ def main(args):
 
                         dom.span(token.text, **attrs)
 
-    print(doc, file=out_file)
-
-    if args.output:
-        out_file.close()
+    return doc
 
 
 def parse_args(args: Optional[list[str]] = None):
