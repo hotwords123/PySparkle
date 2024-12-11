@@ -484,7 +484,7 @@ class PythonVisitor(PythonParserVisitor):
 
             entity.type_params.extend(visitor.type_vars)
 
-        with self.context.scope_guard(scope):
+        with self.context.scope_guard(scope), self.context.set_parent_class(entity):
             if type_params := ctx.typeParams():
                 self.visitTypeParams(type_params)
 
@@ -504,18 +504,9 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
-            # Find the class that the function is defined in.
-            if self.context.current_scope.scope_type is ScopeType.CLASS:
-                node = ctx.parentCtx
-                while not isinstance(node, PythonParser.ClassDefContext):
-                    node = node.parentCtx
-                cls = self.context.entities[node]
-            else:
-                cls = None
-
             scope = self.context.new_scope(ctx, f"{name}.<locals>", ScopeType.LOCAL)
 
-            entity = PyFunction(name, scope, cls=cls)
+            entity = PyFunction(name, scope, cls=self.context.parent_class)
             self.context.entities[ctx] = entity
 
             symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)

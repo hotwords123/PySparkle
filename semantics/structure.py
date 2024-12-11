@@ -6,7 +6,7 @@ from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
-from .entity import PyEntity, PyFunction, PyVariable
+from .entity import PyClass, PyEntity, PyFunction, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TokenInfo, TokenKind
@@ -30,6 +30,8 @@ class PythonContext:
         self.current_scope: SymbolTable = global_scope
         self.scopes: dict[ParserRuleContext, SymbolTable] = {}
 
+        # Used when analyzing method definitions.
+        self.parent_class: Optional[PyClass] = None
         # Used when analyzing parameter specifications.
         self.parent_function: Optional[PyFunction] = None
         # Used when analyzing function calls.
@@ -225,6 +227,15 @@ class PythonContext:
         else:
             self.set_node_info(node, kind=TokenKind.FIELD)
             return PyType.ANY
+
+    @contextmanager
+    def set_parent_class(self, cls: PyClass) -> Iterator[None]:
+        old_class = self.parent_class
+        self.parent_class = cls
+        try:
+            yield
+        finally:
+            self.parent_class = old_class
 
     @contextmanager
     def set_parent_function(self, func: PyFunction) -> Iterator[None]:
