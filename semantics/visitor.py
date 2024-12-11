@@ -504,9 +504,14 @@ class PythonVisitor(PythonParserVisitor):
         name = self.visitName(name_node)
 
         if self.pass_num == 1:
+            if self.context.current_scope.scope_type is ScopeType.CLASS:
+                parent_cls = self.context.parent_class
+            else:
+                parent_cls = None
+
             scope = self.context.new_scope(ctx, f"{name}.<locals>", ScopeType.LOCAL)
 
-            entity = PyFunction(name, scope, cls=self.context.parent_class)
+            entity = PyFunction(name, scope, cls=parent_cls)
             self.context.entities[ctx] = entity
 
             if (symbol := self.context.current_scope.get(name)) and isinstance(
