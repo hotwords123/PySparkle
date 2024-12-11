@@ -27,6 +27,11 @@ special_form_names: Final = {
         "Final",
         "Literal",
     },
+    "typing_extensions": {
+        "Protocol",
+        "Final",
+        "Literal",
+    },
 }
 
 
@@ -98,6 +103,8 @@ class PythonAnalyzer:
                     name, ScopeType.CLASS, full_name=f"{module.name}.{name}"
                 )
                 cls = PyClass(name, cls_scope)
+                # XXX: This is a hack to deal with the aliasing of special forms.
+                cls.set_full_name(f"typing.{name}")
                 cls.modifiers.add("special")
                 symbol = Symbol(SymbolType.CLASS, name, entity=cls)
                 scope.define(symbol)

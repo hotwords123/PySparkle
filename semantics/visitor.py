@@ -8,7 +8,7 @@ from grammar import PythonParserVisitor
 from grammar.PythonParser import PythonParser
 
 from .base import SemanticError
-from .entity import PyClass, PyFunction, PyLambda, PyParameter, PyTypeError
+from .entity import PyClass, PyFunction, PyLambda, PyParameter
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
