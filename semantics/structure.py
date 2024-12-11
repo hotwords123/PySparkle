@@ -17,7 +17,6 @@ from .types import (
     PySelfType,
     PyType,
     TypedSymbol,
-    get_stub_class,
 )
 
 
@@ -286,7 +285,7 @@ class PythonContext:
 
                 if (
                     isinstance(type_, PyInstanceType)
-                    and type_.cls is get_stub_class("builtins.dict")
+                    and type_.cls.full_name == "builtins.dict"
                     and type_.type_args
                     and len(type_.type_args) == 2
                 ):

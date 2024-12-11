@@ -451,7 +451,7 @@ class PyClassType(PyInstanceBase):
         yield from super().attr_scopes()
 
     def get_return_type(self, args: "PyArguments") -> PyType:
-        if self.cls is get_stub_class("typing.TypeVar"):
+        if self.cls.full_name == "typing.TypeVar":
             # TODO: Actually handle function calls.
             if (
                 args.args
@@ -470,7 +470,7 @@ class PyClassType(PyInstanceBase):
 
         # In the form Literal[X], X is interpreted as a literal value, not a type
         # annotation. We need to handle this special case here.
-        if self.cls is not get_stub_class("typing.Literal"):
+        if self.cls.full_name != "typing.Literal":
             # Keep the ellipsis type as is.
             args = tuple(
                 t if isinstance(t, PyEllipsisType) else t.get_annotated_type()
@@ -517,7 +517,7 @@ class PyGenericAlias(PyInstanceBase):
         return get_stub_class("types.GenericAlias", dummy=True)
 
     def get_instance_type(self) -> "PyInstanceType":
-        if self.cls is get_stub_class("builtins.tuple"):
+        if self.cls.full_name == "builtins.tuple":
             if len(self.args) == 2 and isinstance(self.args[1], PyEllipsisType):
                 # A homogeneous tuple type is represented as tuple[T, ...].
                 return PyInstanceType(self.cls, (self.args[0],))
@@ -536,21 +536,21 @@ class PyGenericAlias(PyInstanceBase):
 
     def get_annotated_type(self) -> PyType:
         # Check if the alias is a special form.
-        if self.cls is get_stub_class("typing.Union"):
+        if self.cls.full_name == "typing.Union":
             if self.args:
                 return PyUnionType.from_items(self.args)
             else:
                 # TODO: Report an error.
                 return PyType.ANY
 
-        elif self.cls is get_stub_class("typing.Optional"):
+        elif self.cls.full_name == "typing.Optional":
             if len(self.args) == 1:
                 return PyUnionType.optional(self.args[0])
             else:
                 # TODO: Report an error.
                 return PyType.ANY
 
-        elif self.cls is get_stub_class("typing.Literal"):
+        elif self.cls.full_name == "typing.Literal":
             if all(isinstance(x, PyLiteralType) for x in self.args):
                 return PyUnionType.from_items(self.args)
             else:
@@ -581,10 +581,7 @@ class PyInstanceType(PyInstanceBase):
     def __str__(self) -> str:
         name = self.cls.name
         if self.type_args:
-            if (
-                self.cls is get_stub_class("builtins.tuple")
-                and len(self.type_args) == 1
-            ):
+            if self.cls.full_name == "builtins.tuple" and len(self.type_args) == 1:
                 # A homogeneous tuple type is represented as tuple[T, ...].
                 name += f"[{self.type_args[0]}, ...]"
             else:
@@ -782,9 +779,7 @@ class PyTupleType(PyInstanceBase):
             if 0 <= index < len(self.types):
                 return self.types[index]
 
-        if isinstance(key, PyInstanceType) and key.cls is get_stub_class(
-            "builtins.int"
-        ):
+        if isinstance(key, PyInstanceType) and key.cls.full_name == "builtins.int":
             return self.get_item_type()
 
         # TODO: Handle slices.

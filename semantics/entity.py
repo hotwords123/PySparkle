@@ -144,9 +144,9 @@ class PyClass(_ModifiersMixin, PyEntity):
         return PyClassType(self)
 
     def get_instance_type(self) -> PyType:
-        if self is get_stub_class("types.NoneType"):
+        if self.full_name == "types.NoneType":
             return PyNoneType()
-        if self is get_stub_class("types.EllipsisType"):
+        if self.full_name == "types.EllipsisType":
             return PyEllipsisType()
         return PyInstanceType(self)
 

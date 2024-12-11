@@ -35,7 +35,6 @@ from .types import (
     PyTupleType,
     PyType,
     PyUnpack,
-    get_stub_entity,
     infer_dict_display,
     infer_list_display,
     set_forward_ref_evaluator,
@@ -101,9 +100,8 @@ def _modifier_from_decorator(
     decorator: PyType, modifiers: dict[str, str]
 ) -> Optional[str]:
     if entity := decorator.entity:
-        for name, modifier in modifiers.items():
-            if entity is get_stub_entity(name):
-                return modifier
+        if entity.full_name in modifiers:
+            return modifiers[entity.full_name]
 
     return None
 
