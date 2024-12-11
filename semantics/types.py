@@ -163,6 +163,8 @@ class PyType(ABC):
     """
 
     ANY: "_PyAnyType"
+    NONE: "_PyNoneType"
+    ELLIPSIS: "_PyEllipsisType"
 
     @abstractmethod
     def __str__(self) -> str:
@@ -266,7 +268,7 @@ class _PyAnyType(PyType):
         return "Any"
 
     def __eq__(self, other: object) -> bool:
-        return other is PyType.ANY
+        return self is other
 
 
 PyType.ANY = _PyAnyType()
@@ -473,8 +475,7 @@ class PyClassType(PyInstanceBase):
         if self.cls.full_name != "typing.Literal":
             # Keep the ellipsis type as is.
             args = tuple(
-                t if isinstance(t, PyEllipsisType) else t.get_annotated_type()
-                for t in args
+                t if t is PyType.ELLIPSIS else t.get_annotated_type() for t in args
             )
 
         return PyGenericAlias(self.cls, args)
@@ -518,7 +519,7 @@ class PyGenericAlias(PyInstanceBase):
 
     def get_instance_type(self) -> "PyInstanceType":
         if self.cls.full_name == "builtins.tuple":
-            if len(self.args) == 2 and isinstance(self.args[1], PyEllipsisType):
+            if len(self.args) == 2 and self.args[1] is PyType.ELLIPSIS:
                 # A homogeneous tuple type is represented as tuple[T, ...].
                 return PyInstanceType(self.cls, (self.args[0],))
             else:
@@ -678,12 +679,12 @@ class PyFunctionType(PyInstanceBase):
 
 
 @final
-class PyNoneType(PyInstanceBase):
+class _PyNoneType(PyInstanceBase):
     def __str__(self) -> str:
         return "None"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, PyNoneType)
+        return self is other
 
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.NoneType", dummy=True)
@@ -693,16 +694,22 @@ class PyNoneType(PyInstanceBase):
         return self
 
 
+PyType.NONE = _PyNoneType()
+
+
 @final
-class PyEllipsisType(PyInstanceBase):
+class _PyEllipsisType(PyInstanceBase):
     def __str__(self) -> str:
         return "EllipsisType"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, PyEllipsisType)
+        return self is other
 
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.EllipsisType", dummy=True)
+
+
+PyType.ELLIPSIS = _PyEllipsisType()
 
 
 type SimpleLiteral = bool | int | float | complex | str | bytes
@@ -947,7 +954,7 @@ class PyUnionType(PyType):
         Returns:
             The optional type.
         """
-        return PyUnionType.from_items((item, PyNoneType()))
+        return PyUnionType.from_items((item, PyType.NONE))
 
 
 class PyKeywordArgument(NamedTuple):

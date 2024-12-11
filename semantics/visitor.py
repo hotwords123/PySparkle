@@ -24,13 +24,11 @@ from .types import (
     PyArguments,
     PyClassType,
     PyDictDisplayItem,
-    PyEllipsisType,
     PyGenericAlias,
     PyInstanceType,
     PyKeywordArgument,
     PyKvPair,
     PyLiteralType,
-    PyNoneType,
     PyPackedTuple,
     PyTupleType,
     PyType,
@@ -174,10 +172,10 @@ class PythonVisitor(PythonParserVisitor):
                 return self.visitName(node)
 
             case PythonParser.NONE:
-                return PyNoneType()
+                return PyType.NONE
 
             case PythonParser.ELLIPSIS:
-                return PyEllipsisType()
+                return PyType.ELLIPSIS
 
             case (
                 PythonParser.FALSE
@@ -1097,7 +1095,7 @@ class PythonVisitor(PythonParserVisitor):
         """
         if ctx is not None:
             return self.visitExpression(ctx)
-        return PyNoneType()
+        return PyType.NONE
 
     # atom
     #   : NAME

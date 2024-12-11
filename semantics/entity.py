@@ -6,11 +6,9 @@ from .scope import ScopeType, SymbolTable
 from .types import (
     PyArguments,
     PyClassType,
-    PyEllipsisType,
     PyFunctionType,
     PyInstanceType,
     PyModuleType,
-    PyNoneType,
     PySelfType,
     PyType,
     PyTypeVar,
@@ -145,9 +143,9 @@ class PyClass(_ModifiersMixin, PyEntity):
 
     def get_instance_type(self) -> PyType:
         if self.full_name == "types.NoneType":
-            return PyNoneType()
+            return PyType.NONE
         if self.full_name == "types.EllipsisType":
-            return PyEllipsisType()
+            return PyType.ELLIPSIS
         return PyInstanceType(self)
 
     def get_self_type(self) -> PySelfType:
