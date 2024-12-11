@@ -151,7 +151,7 @@ class PythonAnalyzer:
             stmt.symbol.set_entity(module)
 
             for name in stmt.path[1:]:
-                module = self.import_and_define_module(module, name)
+                module = self.import_and_define_module(module, name, context)
                 assert module is not None
 
     def load_import_from(
@@ -206,7 +206,7 @@ class PythonAnalyzer:
                                 self.importer.import_module(f"{base_name}.{name}")
                             )
 
-                elif self.import_and_define_module(imported_module, name):
+                elif self.import_and_define_module(imported_module, name, context):
                     # Otherwise, attempt to import a submodule with the name.
                     symbol.target = imported_scope[name]
 
@@ -221,7 +221,7 @@ class PythonAnalyzer:
                     context.global_scope.define(symbol)
 
     def import_and_define_module(
-        self, module: PyModule, name: str
+        self, module: PyModule, name: str, error_context: PythonContext
     ) -> Optional[PyModule]:
         """
         Imports and defines a submodule in the global scope of a module.
@@ -229,6 +229,7 @@ class PythonAnalyzer:
         Args:
             module: The module to import the submodule into.
             name: The name of the submodule to import.
+            error_context: The context to report errors to.
 
         Returns:
             submodule: The imported submodule, or None if the import failed.
@@ -236,12 +237,21 @@ class PythonAnalyzer:
         try:
             submodule = self.importer.import_module(f"{module.name}.{name}")
         except PyImportError as e:
-            module.context.errors.append(e)
+            if error_context is module.context:
+                # This error originates from an import-name statement.
+                error_context.errors.append(e)
+            else:
+                # This error originates from an import-from statement.
+                error_context.errors.append(
+                    PyImportError(
+                        module.name, f"Cannot import name {name!r} from {module.name!r}"
+                    )
+                )
             return None
 
         symbol = Symbol(SymbolType.IMPORTED, name, entity=submodule)
 
-        with module.context.wrap_errors(PyDuplicateSymbolError):
+        with error_context.wrap_errors(PyDuplicateSymbolError):
             module.context.global_scope.define(symbol)
 
         return submodule
