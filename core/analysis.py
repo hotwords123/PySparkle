@@ -108,6 +108,7 @@ class PythonAnalyzer:
                 # XXX: This is a hack to deal with the aliasing of special forms.
                 cls.set_full_name(f"typing.{name}")
                 cls.modifiers.add("special")
+                cls.arguments = []
                 symbol = Symbol(SymbolType.CLASS, name, entity=cls)
                 scope.define(symbol)
 
