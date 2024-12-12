@@ -11,6 +11,7 @@ from .types import (
     PyModuleType,
     PySelfType,
     PyType,
+    PyTypeArgs,
     PyTypeError,
     PyTypeVar,
     get_stub_class,
@@ -152,6 +153,9 @@ class PyClass(_ModifiersMixin, PyEntity):
 
     def get_self_type(self) -> PySelfType:
         return PySelfType(self)
+
+    def default_type_args(self) -> PyTypeArgs:
+        return tuple(PyType.ANY for _ in self.type_params)
 
     def mro_scopes(self, instance: bool = False) -> Iterator[SymbolTable]:
         """

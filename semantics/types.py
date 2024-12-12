@@ -345,6 +345,27 @@ class PyType(ABC):
             case False, False:
                 return PyType.NEVER
 
+    def check_protocol(self, protocol: "PyClass") -> Optional["PyTypeArgs"]:
+        """
+        Checks if the type conforms to the given protocol.
+
+        Args:
+            protocol: The protocol class to check against.
+
+        Returns:
+            type_args: The type arguments of the protocol if the type conforms to the
+                protocol, or None otherwise. If the protocol has no type parameters, an
+                empty tuple is returned.
+        """
+        return None
+
+    def check_protocol_or_any(self, protocol: "PyClass") -> "PyTypeArgs":
+        """ """
+        if (type_args := self.check_protocol(protocol)) is not None:
+            return type_args
+        else:
+            return protocol.default_type_args()
+
 
 @final
 class _PyAnyType(PyType):
@@ -460,6 +481,19 @@ class PyInstanceBase(PyType, ABC):
 
     def get_awaited_type(self) -> PyType:
         return self.get_method_return_type("__await__", PyArguments())
+
+    def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
+        assert protocol.has_modifier("protocol")
+
+        # Check nominal subtyping.
+        if protocol in self.get_cls().mro:
+            type_args = get_base_type_args(
+                self.get_cls(), protocol, self.get_type_args()
+            )
+            return type_args if type_args is not None else protocol.default_type_args()
+
+        # TODO: Check structural subtyping.
+        return None
 
 
 class PyTypeVarDef(PyInstanceBase):
@@ -623,14 +657,17 @@ class PyGenericAlias(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.GenericAlias", dummy=True)
 
-    def get_instance_type(self) -> "PyInstanceType":
+    def get_instance_type(
+        self, convert_tuples: bool = True
+    ) -> "PyInstanceType | PyTupleType":
         if self.cls.full_name == "builtins.tuple":
             if len(self.args) == 2 and self.args[1] is PyType.ELLIPSIS:
                 # A homogeneous tuple type is represented as tuple[T, ...].
                 return PyInstanceType(self.cls, (self.args[0],))
             else:
                 # A tuple type with multiple items is represented as tuple[T1, ..., Tn].
-                return PyTupleType(self.args)
+                tuple_type = PyTupleType(self.args)
+                return tuple_type if convert_tuples else tuple_type.get_fallback_type()
 
         return PyInstanceType(self.cls, self.args)
 
@@ -954,6 +991,9 @@ class PyTupleType(PyInstanceBase):
     def get_item_type(self) -> PyType:
         return PyUnionType.from_items(self.types)
 
+    def get_fallback_type(self) -> PyInstanceType:
+        return PyInstanceType(self.get_cls(), self.get_type_args())
+
     @staticmethod
     def from_starred(item_types: Iterable[PyType]) -> PyType:
         """
@@ -1016,15 +1056,27 @@ class PyUnpack(PyType):
     def get_unpacked_type(self) -> PyType:
         """
         Returns the type of any single unpacked item.
-
-        Currently, this only works for PyTupleType.
         """
         if isinstance(self.inner, PyTupleType):
             return self.inner.get_item_type()
 
-        # TODO: Check if the inner type is an iterable.
+        # Check if the inner type is an iterable.
+        (value_type,) = self.inner.check_protocol_or_any(
+            get_stub_class("typing.Iterable", dummy=True)
+        )
+        return value_type
 
-        return PyType.ANY
+    def get_unpacked_kvpair(self) -> "PyKvPair":
+        """
+        Returns the key-value pair of the unpacked item.
+        """
+        assert self.kvpair
+
+        # The inner type should be a Mapping type.
+        key_type, value_type = self.inner.check_protocol_or_any(
+            get_stub_class("typing.Mapping", dummy=True)
+        )
+        return PyKvPair(key_type, value_type)
 
 
 @final
@@ -1221,9 +1273,10 @@ def infer_dict_display(items: Iterable[PyDictDisplayItem]) -> Optional[PyTypeArg
 
     for item in items:
         if isinstance(item, PyUnpack):
-            # TODO: If the unpacked item is a mapping, infer the key and value types.
-            key_types.append(PyType.ANY)
-            value_types.append(PyType.ANY)
+            # The unpacked item should be a Mapping type.
+            key_type, value_type = item.get_unpacked_kvpair()
+            key_types.append(key_type)
+            value_types.append(value_type)
         else:
             key_types.append(item.key)
             value_types.append(item.value)

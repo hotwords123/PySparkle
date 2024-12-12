@@ -35,6 +35,7 @@ from .types import (
     PyTypeError,
     PyUnionType,
     PyUnpack,
+    get_stub_class,
     infer_dict_display,
     infer_list_display,
     set_error_reporter,
@@ -528,8 +529,11 @@ class PythonVisitor(PythonParserVisitor):
                     entity.bases.append(PyInstanceType(arg.cls))
                 elif isinstance(arg, PyGenericAlias):
                     # TODO: Verify that the generic alias is a valid base class.
-                    entity.bases.append(arg.get_instance_type())
+                    entity.bases.append(arg.get_instance_type(convert_tuples=False))
                     visitor.visit_type_args(arg.args)
+
+            if any(base.cls.full_name == "typing.Protocol" for base in entity.bases):
+                entity.modifiers.add("protocol")
 
             entity.type_params.extend(visitor.type_vars)
 
@@ -876,6 +880,26 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitDefault(self, ctx: PythonParser.DefaultContext) -> PyType:
         return self.visitExpression(ctx.expression())
+
+    # forStmt
+    #   : 'async'? 'for' starTargets 'in' starExpressions ':' block elseBlock?;
+    @_type_check
+    @_visitor_guard
+    def visitForStmt(self, ctx: PythonParser.ForStmtContext):
+        iter_type = self.visitStarExpressions(ctx.starExpressions())
+
+        (value_type,) = iter_type.check_protocol_or_any(
+            get_stub_class(
+                "typing.AsyncIterable" if ctx.ASYNC() else "typing.Iterable", dummy=True
+            )
+        )
+
+        self.visitStarTargets(ctx.starTargets(), value_type=value_type)
+
+        self.visitBlock(ctx.block())
+
+        if node := ctx.elseBlock():
+            self.visitElseBlock(node)
 
     # exceptBlock
     #   : 'except' (expression ('as' NAME)?)? ':' block;
@@ -1513,13 +1537,23 @@ class PythonVisitor(PythonParserVisitor):
         Args:
             level: The level of the for-if clause, starting from 0.
         """
-        self.visitStarTargets(ctx.starTargets())
-
         # The first iterable is evaluated in the enclosing scope.
         # The remaining iterables are evaluated in the current scope.
         scope = self.context.parent_scope if level == 0 else self.context.current_scope
         with self.context.scope_guard(scope):
-            self.visitLogical(ctx.logical(0))
+            iter_type = self.visitLogical(ctx.logical(0))
+
+        if self.pass_num == 2:
+            (value_type,) = iter_type.check_protocol_or_any(
+                get_stub_class(
+                    "typing.AsyncIterable" if ctx.ASYNC() else "typing.Iterable",
+                    dummy=True,
+                )
+            )
+        else:
+            value_type = PyType.ANY
+
+        self.visitStarTargets(ctx.starTargets(), value_type=value_type)
 
         # The if-clauses are evaluated in the current scope.
         for logical in ctx.logical()[1:]:
@@ -1534,8 +1568,8 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
 
         if self.pass_num == 2:
             return PyInstanceType.from_stub(
@@ -1551,8 +1585,8 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
 
         if self.pass_num == 2:
             return PyInstanceType.from_stub(
@@ -1568,8 +1602,8 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
 
         if self.pass_num == 2:
             return PyInstanceType.from_stub(
@@ -1586,8 +1620,8 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            type_ = self.visitKvpair(ctx.kvpair())
             self.visitForIfClauses(ctx.forIfClauses())
+            type_ = self.visitKvpair(ctx.kvpair())
 
         if self.pass_num == 2:
             key_type, value_type = type_
