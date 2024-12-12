@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Callable
 
+from semantics.base import SemanticError
 from semantics.entity import PyModule, PyPackage
 
 
@@ -96,7 +97,7 @@ class ModuleManager:
         module.loaded = True
 
 
-class PyImportError(Exception):
+class PyImportError(SemanticError):
     def __init__(self, module_name: str, message: str):
         super().__init__(message)
         self.module_name = module_name

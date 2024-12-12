@@ -11,8 +11,10 @@ from .types import (
     PyModuleType,
     PySelfType,
     PyType,
+    PyTypeError,
     PyTypeVar,
     get_stub_class,
+    report_type_error,
 )
 
 if TYPE_CHECKING:
@@ -187,15 +189,23 @@ class PyClass(_ModifiersMixin, PyEntity):
     @property
     def mro(self) -> list["PyClass"]:
         if self._mro is None:
+            if self.arguments is None:
+                # The class is not fully defined yet. Return a placeholder.
+                return [self]
+
             if self._computing_mro:
-                # TODO: Recursive inheritance; should raise an error.
+                report_type_error(
+                    PyTypeError(
+                        f"Recursive inheritance detected (in class {self.full_name!r})"
+                    )
+                )
                 return [self]
 
             self._computing_mro = True
             try:
                 self._mro = self.compute_mro()
-            except PyTypeError:
-                # TODO: Handle the error.
+            except PyTypeError as e:
+                report_type_error(e)
                 self._mro = [self]
             finally:
                 self._computing_mro = False
@@ -231,7 +241,7 @@ class PyClass(_ModifiersMixin, PyEntity):
                 break
             else:
                 raise PyTypeError(
-                    f"Cannot create a consistent MRO (in class {self.name!r})"
+                    f"Cannot create a consistent MRO (in class {self.full_name!r})"
                 )
 
             # Add the head element to the MRO.
@@ -352,8 +362,3 @@ class PyParameter(PyVariable):
 
     def __str__(self):
         return f"<parameter {self.star or ''}{self.name}>"
-
-
-class PyTypeError(Exception):
-    def __init__(self, message: str):
-        super().__init__(message)

@@ -1,13 +1,13 @@
 from ast import literal_eval
-from typing import NamedTuple, Optional
+from contextlib import contextmanager
+from typing import Iterator, NamedTuple, Optional
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.tree.Tree import ErrorNode, ParseTree, TerminalNode
 
-from grammar import PythonParserVisitor
-from grammar.PythonParser import PythonParser
+from grammar import PythonParser, PythonParserVisitor
 
-from .base import SemanticError
+from .base import PySyntaxError, SemanticError
 from .entity import PyClass, PyFunction, PyLambda, PyParameter
 from .scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from .structure import (
@@ -32,19 +32,27 @@ from .types import (
     PyPackedTuple,
     PyTupleType,
     PyType,
+    PyTypeError,
     PyUnionType,
     PyUnpack,
     infer_dict_display,
     infer_list_display,
+    set_error_reporter,
     set_forward_ref_evaluator,
 )
 
 
 def _visitor_guard(func):
     def wrapper(self: "PythonVisitor", ctx: ParserRuleContext, **kwargs):
-        if ctx.exception is not None:
-            return self.visitChildren(ctx)
-        return func(self, ctx, **kwargs)
+        old_ctx, self._current_ctx = self._current_ctx, ctx
+        try:
+            if ctx.exception is not None:
+                return self.visitChildren(ctx)
+            return func(self, ctx, **kwargs)
+        except Exception as e:
+            self._report_error(e, ctx)
+        finally:
+            self._current_ctx = old_ctx
 
     return wrapper
 
@@ -120,6 +128,9 @@ class PythonVisitor(PythonParserVisitor):
 
         self._outer_symbols: list[_OuterSymbol] = []
 
+        # Used for error reporting.
+        self._current_ctx: Optional[ParserRuleContext] = None
+
     def first_pass(self, tree):
         """
         Visits the entire parse tree for the first pass.
@@ -134,7 +145,10 @@ class PythonVisitor(PythonParserVisitor):
         Visits the entire parse tree for the second pass.
         """
         self.pass_num = 2
-        with set_forward_ref_evaluator(self._evaluate_forward_ref):
+        with (
+            set_forward_ref_evaluator(self._evaluate_forward_ref),
+            set_error_reporter(self._report_error),
+        ):
             self.visit(tree)
 
     def _resolve_outer_symbols(self):
@@ -163,6 +177,28 @@ class PythonVisitor(PythonParserVisitor):
         if symbol := self.context.current_scope.lookup(value):
             return symbol.get_type()
         return PyType.ANY
+
+    def _report_error(self, error: Exception, node: Optional[ParseTree] = None):
+        if isinstance(error, SemanticError):
+            node = node or self._current_ctx
+            if error.token is None and node is not None:
+                error.set_context(node)
+
+        else:
+            import traceback
+
+            traceback.print_exception(type(error), error, error.__traceback__)
+
+        self.context.errors.append(error)
+
+    @contextmanager
+    def _wrap_errors(
+        self, error_cls: type[Exception], node: Optional[ParseTree] = None
+    ) -> Iterator[None]:
+        try:
+            yield
+        except error_cls as e:
+            self._report_error(e, node)
 
     def aggregateResult(self, aggregate, nextResult):
         return aggregate or nextResult
@@ -201,9 +237,11 @@ class PythonVisitor(PythonParserVisitor):
 
     @_type_check
     def visitLiteral(self, node: TerminalNode) -> PyType:
-        with self.context.wrap_errors(ValueError):
+        try:
             return PyLiteralType(literal_eval(node.getText()))
-        return PyType.ANY
+        except ValueError as e:
+            self._report_error(PyTypeError(str(e), node))
+            return PyType.ANY
 
     def visitErrorNode(self, node: ErrorNode):
         if self.pass_num == 1:
@@ -246,9 +284,7 @@ class PythonVisitor(PythonParserVisitor):
             self.context.parent_function.returned_types.append(type_)
 
         else:
-            self.context.errors.append(
-                SemanticError("'return' outside function", ctx.start, ctx.stop)
-            )
+            self._report_error(PySyntaxError("'return' outside function"))
 
     # globalStmt: 'global' NAME (',' NAME)*;
     @_first_pass_only
@@ -260,7 +296,7 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(SymbolType.GLOBAL, name, name_node)
             self.context.set_node_info(name_node, symbol=symbol)
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
             self._outer_symbols.append(_OuterSymbol(symbol, self.context.current_scope))
@@ -275,7 +311,7 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(SymbolType.NONLOCAL, name, name_node)
             self.context.set_node_info(name_node, symbol=symbol)
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
             self._outer_symbols.append(_OuterSymbol(symbol, self.context.current_scope))
@@ -296,7 +332,7 @@ class PythonVisitor(PythonParserVisitor):
 
         targets = self.visitImportFromTargets(ctx.importFromTargets())
 
-        self.context.imports.append(PyImportFrom(path, relative, targets))
+        self.context.imports.append(PyImportFrom(path, relative, targets, ctx))
 
     # importFromTargets
     #   : '(' importFromAsNames ','? ')'
@@ -363,7 +399,7 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(SymbolType.IMPORTED, name, name_node)
             self.context.set_node_info(name_node, symbol=symbol)
 
-        with self.context.wrap_errors(PyDuplicateSymbolError):
+        with self._wrap_errors(PyDuplicateSymbolError):
             self.context.current_scope.define(symbol)
 
         return PyImportFromAsName(name, alias, symbol)
@@ -386,14 +422,14 @@ class PythonVisitor(PythonParserVisitor):
             # The name always refers to a module.
             self.context.set_node_info(alias_node, kind=TokenKind.MODULE, symbol=symbol)
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         else:
             path, symbol = self.visitDottedName(ctx.dottedName(), define=True)
             alias = None
 
-        self.context.imports.append(PyImportName(path, alias, symbol))
+        self.context.imports.append(PyImportName(path, alias, symbol, ctx.parentCtx))
 
     # dottedName: dottedName '.' NAME | NAME;
     @_first_pass_only
@@ -429,7 +465,7 @@ class PythonVisitor(PythonParserVisitor):
                 symbol = Symbol(SymbolType.IMPORTED, name, name_node)
                 self.context.set_node_info(name_node, symbol=symbol)
 
-                with self.context.wrap_errors(PyDuplicateSymbolError):
+                with self._wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
 
             return [name], symbol
@@ -466,7 +502,7 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(SymbolType.CLASS, name, name_node, entity=entity)
             self.context.set_node_info(name_node, kind=TokenKind.CLASS, symbol=symbol)
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.current_scope.define(symbol)
 
         elif self.pass_num == 2:
@@ -534,7 +570,7 @@ class PythonVisitor(PythonParserVisitor):
                 prev_func.overloads.append(entity)
             else:
                 symbol = Symbol(SymbolType.FUNCTION, name, name_node, entity=entity)
-                with self.context.wrap_errors(PyDuplicateSymbolError):
+                with self._wrap_errors(PyDuplicateSymbolError):
                     self.context.current_scope.define(symbol)
 
             self.context.set_node_info(
@@ -776,7 +812,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.parent_function.scope.define(symbol)
 
         else:
@@ -808,7 +844,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.parent_function.scope.define(symbol)
 
         else:
@@ -897,12 +933,11 @@ class PythonVisitor(PythonParserVisitor):
             # expression must not be a starred expression in this case.
             type_ = self.visitStarExpression(node := ctx.starExpression(0))
             if isinstance(type_, PyUnpack):
-                self.context.errors.append(
-                    SemanticError(
+                self._report_error(
+                    PySyntaxError(
                         "Starred expressions are not allowed here",
-                        node.start,
-                        node.stop,
                     ),
+                    node,
                 )
                 return PyType.ANY
 
@@ -1343,7 +1378,7 @@ class PythonVisitor(PythonParserVisitor):
                 name_node, kind=TokenKind.VARIABLE, symbol=symbol
             )
 
-            with self.context.wrap_errors(PyDuplicateSymbolError):
+            with self._wrap_errors(PyDuplicateSymbolError):
                 self.context.parent_function.scope.define(symbol)
 
         else:
@@ -1369,8 +1404,8 @@ class PythonVisitor(PythonParserVisitor):
                 result += type_.value
             else:
                 token = string.STRING_LITERAL() or string.BYTES_LITERAL()
-                self.context.errors.append(
-                    SemanticError("cannot mix bytes and nonbytes literals", token)
+                self._report_error(
+                    PyTypeError("cannot mix bytes and nonbytes literals"), token
                 )
                 return PyType.ANY
 
@@ -1693,12 +1728,11 @@ class PythonVisitor(PythonParserVisitor):
             for i, star_target in enumerate(ctx.starTarget()):
                 if star_target.STAR():
                     if star_index is not None:
-                        self.context.errors.append(
-                            SemanticError(
+                        self._report_error(
+                            PySyntaxError(
                                 "multiple starred expressions in assignment",
-                                star_target.start,
-                                star_target.stop,
-                            )
+                            ),
+                            star_target,
                         )
                     else:
                         star_index = i
@@ -1723,9 +1757,7 @@ class PythonVisitor(PythonParserVisitor):
         Helper method to check for invalid starred expressions in assignment targets.
         """
         if ctx.STAR():
-            self.context.errors.append(
-                SemanticError("cannot use starred expression here", ctx.start, ctx.stop)
-            )
+            self._report_error(PySyntaxError("cannot use starred expression here"))
 
     def handle_star_targets_unpacked(
         self,
@@ -1742,32 +1774,26 @@ class PythonVisitor(PythonParserVisitor):
         if star_index is not None:
             num_targets -= 1  # Exclude the starred target
             if (num_starred := num_unpacked - num_targets) < 0:
-                self.context.errors.append(
-                    SemanticError(
+                self._report_error(
+                    PyTypeError(
                         f"not enough values to unpack (expected at least "
                         f"{num_targets}, got {num_unpacked})",
-                        ctx.start,
-                        ctx.stop,
                     )
                 )
                 num_starred = 0
         else:
             if num_unpacked < num_targets:
-                self.context.errors.append(
-                    SemanticError(
+                self._report_error(
+                    PyTypeError(
                         f"not enough values to unpack (expected {num_targets}, "
                         f"got {num_unpacked})",
-                        ctx.start,
-                        ctx.stop,
                     )
                 )
             elif num_unpacked > num_targets:
-                self.context.errors.append(
-                    SemanticError(
+                self._report_error(
+                    PyTypeError(
                         f"too many values to unpack (expected {num_targets}, "
                         f"got {num_unpacked})",
-                        ctx.start,
-                        ctx.stop,
                     )
                 )
 

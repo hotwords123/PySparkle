@@ -24,6 +24,7 @@ from typing import (
     overload,
 )
 
+from .base import SemanticError
 from .scope import ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 
@@ -31,10 +32,15 @@ if TYPE_CHECKING:
     from .entity import PyClass, PyEntity, PyFunction, PyModule
 
 
+class PyTypeError(SemanticError):
+    pass
+
+
 class _TypeContext(threading.local):
     def __init__(self):
         self.stubs: dict[str, SymbolTable] = {}
         self.forward_ref_evaluator: Callable[[str], "PyType"] = lambda _: PyType.ANY
+        self.error_reporter: Optional[Callable[[PyTypeError], None]] = None
 
 
 _type_context = _TypeContext()
@@ -58,6 +64,16 @@ def set_forward_ref_evaluator(callback: Callable[[str], "PyType"]):
         yield
     finally:
         _type_context.forward_ref_evaluator = old_evaluator
+
+
+@contextmanager
+def set_error_reporter(callback: Optional[Callable[[PyTypeError], None]]):
+    old_reporter = _type_context.error_reporter
+    _type_context.error_reporter = callback
+    try:
+        yield
+    finally:
+        _type_context.error_reporter = old_reporter
 
 
 def get_stub_symbol(name: str) -> Optional[Symbol]:
@@ -118,6 +134,11 @@ def get_stub_func(name: str) -> Optional["PyFunction"]:
         return entity
 
     return None
+
+
+def report_type_error(error: PyTypeError):
+    if reporter := _type_context.error_reporter:
+        reporter(error)
 
 
 class TypedScope(NamedTuple):
@@ -462,7 +483,7 @@ class PyClassType(PyInstanceBase):
             ):
                 return PyTypeVarDef(PyTypeVar(arg.value))
             else:
-                # TODO: Report an errornous call.
+                report_type_error(PyTypeError("Invalid type variable definition"))
                 return PyType.ANY
 
         return PyInstanceType(self.cls)
@@ -541,21 +562,27 @@ class PyGenericAlias(PyInstanceBase):
             if self.args:
                 return PyUnionType.from_items(self.args)
             else:
-                # TODO: Report an error.
+                report_type_error(
+                    PyTypeError("Union type must have at least one argument")
+                )
                 return PyType.ANY
 
         elif self.cls.full_name == "typing.Optional":
             if len(self.args) == 1:
                 return PyUnionType.optional(self.args[0])
             else:
-                # TODO: Report an error.
+                report_type_error(
+                    PyTypeError("Optional type must have exactly one argument")
+                )
                 return PyType.ANY
 
         elif self.cls.full_name == "typing.Literal":
-            if all(isinstance(x, PyLiteralType) for x in self.args):
+            if self.args and all(isinstance(x, PyLiteralType) for x in self.args):
                 return PyUnionType.from_items(self.args)
             else:
-                # TODO: Report an error.
+                report_type_error(
+                    PyTypeError("Literal type arguments must be literals")
+                )
                 return PyType.ANY
 
         return self.get_instance_type()

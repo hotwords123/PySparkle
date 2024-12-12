@@ -6,6 +6,8 @@ from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import TerminalNode
 
+from grammar import PythonParser
+
 from .entity import PyClass, PyEntity, PyFunction, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
@@ -83,13 +85,6 @@ class PythonContext:
     def set_node_info(self, node: TerminalNode, /, **kwargs: Unpack[TokenInfo]):
         token = node.getSymbol()
         self.token_info.setdefault(token, TokenInfo()).update(**kwargs)
-
-    @contextmanager
-    def wrap_errors(self, error_cls: type[Exception]) -> Iterator[None]:
-        try:
-            yield
-        except error_cls as e:
-            self.errors.append(e)
 
     def define_variable(
         self,
@@ -332,10 +327,12 @@ class PyImportName(PyImport):
     Attributes:
         alias: The alias of the imported module, or `None` if not aliased.
         symbol: The symbol that the import resolves to.
+        ctx: The context of the import statement.
     """
 
     alias: Optional[str]
     symbol: Symbol
+    ctx: PythonParser.ImportNameContext
 
 
 @dataclasses.dataclass
@@ -346,10 +343,12 @@ class PyImportFrom(PyImport):
     Attributes:
         relative: The number of parent directories to import from.
         targets: The targets of the import statement.
+        ctx: The context of the import statement.
     """
 
     relative: Optional[int]
     targets: "PyImportFromTargets"
+    ctx: PythonParser.ImportFromContext
 
 
 class PyImportFromTargets(NamedTuple):

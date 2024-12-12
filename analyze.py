@@ -96,9 +96,6 @@ def main(args):
     module = PyModule(source_path.stem, source_path)
     analyzer.importer.load_module(module)
 
-    for error in module.context.errors:
-        print(error, file=sys.stderr)
-
     with analyzer.set_type_context():
         doc = generate_html(module)
 

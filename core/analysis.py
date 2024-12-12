@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from typing import Final, Optional
 
+from antlr4 import ParserRuleContext
+
 from semantics.entity import PyClass, PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
@@ -136,6 +138,7 @@ class PythonAnalyzer:
         try:
             imported_module = self.importer.import_module(".".join(stmt.path))
         except PyImportError as e:
+            e.set_context(stmt.ctx)
             context.errors.append(e)
             return
 
@@ -151,8 +154,7 @@ class PythonAnalyzer:
             stmt.symbol.set_entity(module)
 
             for name in stmt.path[1:]:
-                module = self.import_and_define_module(module, name, context)
-                assert module is not None
+                module = self.import_and_define_module(module, name, stmt.ctx)
 
     def load_import_from(
         self, base_name: str, context: PythonContext, stmt: PyImportFrom
@@ -182,6 +184,7 @@ class PythonAnalyzer:
             imported_module = self.importer.import_module(".".join(path))
 
         except PyImportError as e:
+            e.set_context(stmt.ctx)
             context.errors.append(e)
             return
 
@@ -201,14 +204,25 @@ class PythonAnalyzer:
                         and target_symbol.type is SymbolType.IMPORTED
                         and target_symbol.resolve_entity() is None
                     ):
-                        with context.wrap_errors(PyImportError):
+                        try:
                             symbol.set_entity(
                                 self.importer.import_module(f"{base_name}.{name}")
                             )
+                        except PyImportError as e:
+                            e.set_context(stmt.ctx)
+                            context.errors.append(e)
 
-                elif self.import_and_define_module(imported_module, name, context):
+                else:
                     # Otherwise, attempt to import a submodule with the name.
-                    symbol.target = imported_scope[name]
+                    try:
+                        self.import_and_define_module(imported_module, name, stmt.ctx)
+                        symbol.target = imported_scope[name]
+                    except PyImportError as e:
+                        e.message = (
+                            f"Cannot import name {name!r} from {imported_module.name!r}"
+                        )
+                        e.set_context(stmt.ctx)
+                        context.errors.append(e)
 
         else:
             # Import all public symbols from the module.
@@ -217,42 +231,34 @@ class PythonAnalyzer:
                     SymbolType.IMPORTED, target_symbol.name, target=target_symbol
                 )
 
-                with context.wrap_errors(PyDuplicateSymbolError):
+                try:
                     context.global_scope.define(symbol)
+                except PyDuplicateSymbolError as e:
+                    e.set_context(stmt.ctx)
+                    context.errors.append(e)
 
     def import_and_define_module(
-        self, module: PyModule, name: str, error_context: PythonContext
-    ) -> Optional[PyModule]:
+        self, module: PyModule, name: str, ctx: ParserRuleContext
+    ) -> PyModule:
         """
         Imports and defines a submodule in the global scope of a module.
 
         Args:
             module: The module to import the submodule into.
             name: The name of the submodule to import.
-            error_context: The context to report errors to.
+            ctx: The context of the import statement.
 
         Returns:
-            submodule: The imported submodule, or None if the import failed.
+            submodule: The imported submodule.
         """
-        try:
-            submodule = self.importer.import_module(f"{module.name}.{name}")
-        except PyImportError as e:
-            if error_context is module.context:
-                # This error originates from an import-name statement.
-                error_context.errors.append(e)
-            else:
-                # This error originates from an import-from statement.
-                error_context.errors.append(
-                    PyImportError(
-                        module.name, f"Cannot import name {name!r} from {module.name!r}"
-                    )
-                )
-            return None
-
+        submodule = self.importer.import_module(f"{module.name}.{name}")
         symbol = Symbol(SymbolType.IMPORTED, name, entity=submodule)
 
-        with error_context.wrap_errors(PyDuplicateSymbolError):
+        try:
             module.context.global_scope.define(symbol)
+        except PyDuplicateSymbolError as e:
+            e.set_context(ctx)
+            module.context.errors.append(e)
 
         return submodule
 
