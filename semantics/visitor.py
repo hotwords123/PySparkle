@@ -973,6 +973,15 @@ class PythonVisitor(PythonParserVisitor):
             symbol = scope[name]
             return self.context.set_variable_type(symbol, type_.get_inferred_type())
 
+    # namedExpression: assignmentExpression | expression;
+    @_type_check
+    @_visitor_guard
+    def visitNamedExpression(self, ctx: PythonParser.NamedExpressionContext) -> PyType:
+        if node := ctx.assignmentExpression():
+            return self.visitAssignmentExpression(node)
+        else:
+            return self.visitExpression(ctx.expression())
+
     # logical
     #   : 'not' logical
     #   | logical 'and' logical
@@ -1484,11 +1493,13 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            self.visitNamedExpression(ctx.namedExpression())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_stub("builtins.list")
+            return PyInstanceType.from_stub(
+                "builtins.list", (type_.get_inferred_type(),)
+            )
 
     # setcomp: '{' namedExpression forIfClauses '}';
     @_visitor_guard
@@ -1499,11 +1510,13 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            self.visitNamedExpression(ctx.namedExpression())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_stub("builtins.set")
+            return PyInstanceType.from_stub(
+                "builtins.set", (type_.get_inferred_type(),)
+            )
 
     # genexp: '(' namedExpression forIfClauses ')';
     @_visitor_guard
@@ -1514,11 +1527,14 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            self.visitNamedExpression(ctx.namedExpression())
+            type_ = self.visitNamedExpression(ctx.namedExpression())
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_stub("types.GeneratorType")
+            return PyInstanceType.from_stub(
+                "types.GeneratorType",
+                (type_.get_inferred_type(), PyType.NONE, PyType.NONE),
+            )
 
     # dictcomp: '{' kvpair forIfClauses '}';
     @_visitor_guard
@@ -1529,11 +1545,15 @@ class PythonVisitor(PythonParserVisitor):
             scope = self.context.scope_of(ctx)
 
         with self.context.scope_guard(scope):
-            self.visitKvpair(ctx.kvpair())
+            type_ = self.visitKvpair(ctx.kvpair())
             self.visitForIfClauses(ctx.forIfClauses())
 
         if self.pass_num == 2:
-            return PyInstanceType.from_stub("builtins.dict")
+            key_type, value_type = type_
+            return PyInstanceType.from_stub(
+                "builtins.dict",
+                (key_type.get_inferred_type(), value_type.get_inferred_type()),
+            )
 
     # arguments: args ','?;
     @_type_check
