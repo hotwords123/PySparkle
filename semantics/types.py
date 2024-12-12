@@ -186,6 +186,7 @@ class PyType(ABC):
     ANY: "_PyAnyType"
     NONE: "_PyNoneType"
     ELLIPSIS: "_PyEllipsisType"
+    NEVER: "_PyNeverType"
 
     @abstractmethod
     def __str__(self) -> str:
@@ -246,6 +247,30 @@ class PyType(ABC):
         for scope in self.attr_scopes():
             yield from scope.iter_symbols()
 
+    def can_be_truthy(self) -> bool:
+        """
+        Checks if the type can be evaluated as True in a boolean context.
+        """
+        return True
+
+    def can_be_falsy(self) -> bool:
+        """
+        Checks if the type can be evaluated as False in a boolean context.
+        """
+        return True
+
+    def extract_truthy(self) -> "PyType":
+        """
+        Returns the type of the truthy value of the type.
+        """
+        return self if self.can_be_truthy() else PyType.NEVER
+
+    def extract_falsy(self) -> "PyType":
+        """
+        Returns the type of the falsy value of the type.
+        """
+        return self if self.can_be_falsy() else PyType.NEVER
+
     def get_return_type(self, args: "PyArguments") -> "PyType":
         """
         Returns the type obtained by calling the type.
@@ -281,6 +306,44 @@ class PyType(ABC):
         its initializer.
         """
         return self
+
+    def get_conjunction_type(self, other: "PyType") -> "PyType":
+        """
+        Returns the type of the expression `self and other`, which is equivalent to
+        `other if self else self`.
+        """
+        return PyUnionType.from_items(
+            (
+                self.extract_falsy(),
+                other if self.can_be_truthy() else PyType.NEVER,
+            )
+        )
+
+    def get_disjunction_type(self, other: "PyType") -> "PyType":
+        """
+        Returns the type of the expression `self or other`, which is equivalent to
+        `self if self else other`.
+        """
+        return PyUnionType.from_items(
+            (
+                self.extract_truthy(),
+                other if self.can_be_falsy() else PyType.NEVER,
+            )
+        )
+
+    def get_inversion_type(self) -> "PyType":
+        """
+        Returns the type of the expression `not self`.
+        """
+        match self.can_be_truthy(), self.can_be_falsy():
+            case True, True:
+                return PyInstanceType.from_stub("builtins.bool")
+            case True, False:
+                return PyLiteralType(True)
+            case False, True:
+                return PyLiteralType(False)
+            case False, False:
+                return PyType.NEVER
 
 
 @final
@@ -366,6 +429,28 @@ class PyInstanceBase(PyType, ABC):
             return method.get_return_type(args)
 
         return PyType.ANY
+
+    def can_be_truthy(self):
+        # Special handling for bool types to avoid infinite recursion.
+        if self.get_cls().full_name == "builtins.bool":
+            return True
+
+        if method := self.lookup_method("__bool__"):
+            return method.get_return_type(PyArguments()).can_be_truthy()
+
+        return True
+
+    def can_be_falsy(self) -> bool:
+        if self.get_cls().full_name == "builtins.bool":
+            return True
+
+        if method := self.lookup_method("__bool__"):
+            return method.get_return_type(PyArguments()).can_be_falsy()
+
+        if method := self.lookup_method("__len__"):
+            return True
+
+        return False
 
     def get_return_type(self, args: "PyArguments") -> PyType:
         return self.get_method_return_type("__call__", args)
@@ -628,6 +713,25 @@ class PyInstanceType(PyInstanceBase):
     def get_type_args(self) -> Optional[PyTypeArgs]:
         return self.type_args
 
+    def extract_truthy(self) -> PyType:
+        if self.cls.full_name == "builtins.bool":
+            return PyLiteralType(True)
+
+        return super().extract_truthy()
+
+    def extract_falsy(self) -> PyType:
+        match self.cls.full_name:
+            case "builtins.bool":
+                return PyLiteralType(False)
+            case "builtins.int":
+                return PyLiteralType(0)
+            case "builtins.str":
+                return PyLiteralType("")
+            case "builtins.bytes":
+                return PyLiteralType(b"")
+
+        return super().extract_falsy()
+
     @classmethod
     def from_stub(cls, name: str, type_args: Optional[PyTypeArgs] = None) -> PyType:
         if entity := get_stub_class(name):
@@ -654,7 +758,7 @@ class PySelfType(PyInstanceType):
     def get_inferred_type(self) -> PyType:
         # The special handling of instance types only applies to the `self` parameter,
         # not to its aliases.
-        return PyInstanceType(self.cls)
+        return PyInstanceType(self.cls, self.type_args)
 
 
 @final
@@ -716,6 +820,12 @@ class _PyNoneType(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.NoneType", dummy=True)
 
+    def can_be_truthy(self) -> Literal[False]:
+        return False
+
+    def can_be_falsy(self) -> Literal[True]:
+        return True
+
     def get_annotated_type(self) -> PyType:
         # None stands its own type in type annotations.
         return self
@@ -734,6 +844,12 @@ class _PyEllipsisType(PyInstanceBase):
 
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.EllipsisType", dummy=True)
+
+    def can_be_truthy(self) -> Literal[True]:
+        return True
+
+    def can_be_falsy(self) -> Literal[False]:
+        return False
 
 
 PyType.ELLIPSIS = _PyEllipsisType()
@@ -764,6 +880,12 @@ class PyLiteralType(PyInstanceBase):
 
     def get_cls(self) -> "PyClass":
         return get_stub_class(LITERAL_TYPE_MAP[type(self.value)], dummy=True)
+
+    def can_be_truthy(self) -> bool:
+        return bool(self.value)
+
+    def can_be_falsy(self) -> bool:
+        return not self.value
 
     def get_annotated_type(self) -> PyType:
         # String literals can represent forward references.
@@ -806,6 +928,12 @@ class PyTupleType(PyInstanceBase):
     def get_type_args(self) -> Optional[PyTypeArgs]:
         # tuple[T1, ..., Tn] -> tuple[T1 | ... | Tn, ...]
         return (self.get_item_type(),)
+
+    def can_be_truthy(self) -> bool:
+        return bool(self.types)
+
+    def can_be_falsy(self) -> bool:
+        return not self.types
 
     def get_subscripted_type(self, key: PyType) -> PyType:
         if isinstance(key, PyLiteralType) and type(key.value) is int:
@@ -938,6 +1066,18 @@ class PyUnionType(PyType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyUnionType) and self.items == other.items
 
+    def can_be_truthy(self) -> bool:
+        return any(t.can_be_truthy() for t in self.items)
+
+    def can_be_falsy(self) -> bool:
+        return any(t.can_be_falsy() for t in self.items)
+
+    def extract_truthy(self) -> PyType:
+        return PyUnionType.from_items(t.extract_truthy() for t in self.items)
+
+    def extract_falsy(self) -> PyType:
+        return PyUnionType.from_items(t.extract_falsy() for t in self.items)
+
     # TODO: Implement the rest of the methods, or the union type will behave like Any.
 
     @staticmethod
@@ -961,9 +1101,11 @@ class PyUnionType(PyType):
             elif item not in unique_items:
                 unique_items.append(item)
 
+        if PyType.NEVER in unique_items:
+            unique_items.remove(PyType.NEVER)
+
         if not unique_items:
-            # TODO: Union should contain at least one type. Report an error.
-            return PyType.ANY
+            return PyType.NEVER
 
         if len(unique_items) == 1:
             return unique_items[0]
@@ -982,6 +1124,37 @@ class PyUnionType(PyType):
             The optional type.
         """
         return PyUnionType.from_items((item, PyType.NONE))
+
+
+class _PyNeverType(PyType):
+    """
+    A type that contains no values. This type is used to represent the result of
+    functions that never return, such as `sys.exit()`, or to indicate unreachable code.
+    """
+
+    def __str__(self) -> str:
+        return "Never"
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def can_be_truthy(self) -> Literal[False]:
+        return False
+
+    def can_be_falsy(self) -> Literal[False]:
+        return False
+
+    def get_return_type(self, args: "PyArguments") -> PyType:
+        return PyType.NEVER
+
+    def get_subscripted_type(self, key: PyType) -> PyType:
+        return PyType.NEVER
+
+    def get_awaited_type(self) -> PyType:
+        return PyType.NEVER
+
+
+PyType.NEVER = _PyNeverType()
 
 
 class PyKeywordArgument(NamedTuple):

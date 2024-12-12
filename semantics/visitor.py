@@ -1026,15 +1026,21 @@ class PythonVisitor(PythonParserVisitor):
     @_visitor_guard
     def visitLogical(self, ctx: PythonParser.LogicalContext) -> PyType:
         if ctx.NOT():
-            self.visitLogical(ctx.logical(0))
+            type_ = self.visitLogical(ctx.logical(0))
 
-            return PyInstanceType.from_stub("builtins.bool")
+            return type_.get_inversion_type()
 
-        elif ctx.AND() or ctx.OR():
+        elif ctx.AND():
             left_type = self.visitLogical(ctx.logical(0))
             right_type = self.visitLogical(ctx.logical(1))
 
-            return PyType.ANY  # TODO
+            return left_type.get_conjunction_type(right_type)
+
+        elif ctx.OR():
+            left_type = self.visitLogical(ctx.logical(0))
+            right_type = self.visitLogical(ctx.logical(1))
+
+            return left_type.get_disjunction_type(right_type)
 
         else:
             return self.visitComparison(ctx.comparison())
