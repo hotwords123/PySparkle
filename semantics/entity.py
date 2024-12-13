@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, Literal, Optional
 
 from .scope import ScopeType, SymbolTable
 from .types import (
@@ -76,6 +76,7 @@ class PyModule(PyEntity):
         super().__init__(name, full_name=name)
         self.path = path
 
+        self.loader: Optional[Callable[[], PythonSource]] = None
         self.source: Optional[PythonSource] = None
         self.context: Optional[PythonContext] = None
         self.loaded = False

@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 from typing import Final
@@ -12,7 +13,6 @@ from semantics.types import get_stub_class, set_type_context
 from semantics.visitor import PythonVisitor
 
 from .modules import ModuleManager, PyImportError
-from .source import PythonSource
 
 # Special forms that require special handling in the Python analyzer.
 special_form_names: Final = {
@@ -36,41 +36,59 @@ special_form_names: Final = {
     },
 }
 
+logger = logging.getLogger(__name__)
+
 
 class PythonAnalyzer:
     def __init__(self, search_paths: list[Path], report_errors: bool = True):
         self.builtin_scope = SymbolTable("builtins", ScopeType.BUILTINS)
         self.type_stubs: dict[str, SymbolTable] = {}
-        self.importer = ModuleManager(search_paths, self.load_module)
+        self.importer = ModuleManager(search_paths, self._load_module)
         self.report_errors = report_errors
         self.typeshed_loaded = False
         self.pending_second_pass: list[PyModule] = []
 
-    def load_module(self, module: PyModule):
+    def load_module(self, module: PyModule, reload: bool = False):
         """
         Loads a Python module.
         """
-        global_scope = self.build_global_scope(module)
+        if module in self.importer:
+            if not reload:
+                return
+            self.unload_module(module)
+        self.importer.load_module(module)
+
+    def unload_module(self, module: PyModule):
+        """
+        Unloads a Python module.
+        """
+        self.importer.unload_module(module)
+
+    def _load_module(self, module: PyModule):
+        """
+        The internal method for loading a Python module.
+        """
+        global_scope = self._build_global_scope(module)
         module.context = PythonContext(global_scope)
 
-        if module.path is not None:
-            print(f"Loading module {module.name!r} from {module.path}", file=sys.stderr)
-
-            module.source = PythonSource.parse(module.path)
+        if module.loader is not None:
+            logger.info(f"Loading {module} from {module.path}")
+            module.source = module.loader()
+            module.loader = None
 
             visitor = PythonVisitor(module.context)
             visitor.first_pass(module.source.tree)
 
-            self.load_imports(module)
+            self._load_imports(module)
 
             if self.typeshed_loaded:
                 with self.set_type_context():
                     visitor.second_pass(module.source.tree)
-                self.report_module_errors(module)
+                self._report_module_errors(module)
             else:
                 self.pending_second_pass.append(module)
 
-    def report_module_errors(self, module: PyModule):
+    def _report_module_errors(self, module: PyModule):
         """
         Reports the errors within a Python module.
         """
@@ -78,14 +96,11 @@ class PythonAnalyzer:
             return
 
         if module.context.errors:
-            print(f"In {module}:", file=sys.stderr)
-
+            logger.info(f"In {module}:")
             for error in module.context.errors:
-                print(f"  {error}", file=sys.stderr)
+                logger.error(f"  {error}")
 
-            print(file=sys.stderr)
-
-    def build_global_scope(self, module: PyModule) -> SymbolTable:
+    def _build_global_scope(self, module: PyModule) -> SymbolTable:
         """
         Builds the global scope for a Python module.
         """
@@ -114,21 +129,21 @@ class PythonAnalyzer:
 
         return scope
 
-    def load_imports(self, module: PyModule):
+    def _load_imports(self, module: PyModule):
         """
         Loads the imports for a Python module.
         """
         for stmt in module.context.imports:
             if isinstance(stmt, PyImportName):
-                self.load_import_name(module.context, stmt)
+                self._load_import_name(module.context, stmt)
             elif isinstance(stmt, PyImportFrom):
                 if isinstance(module, PyPackage):
                     base_name = module.name
                 else:
                     base_name = module.package
-                self.load_import_from(base_name, module.context, stmt)
+                self._load_import_from(base_name, module.context, stmt)
 
-    def load_import_name(self, context: PythonContext, stmt: PyImportName):
+    def _load_import_name(self, context: PythonContext, stmt: PyImportName):
         """
         Loads an import-name statement for a Python module.
 
@@ -154,9 +169,9 @@ class PythonAnalyzer:
             stmt.symbol.set_entity(module)
 
             for name in stmt.path[1:]:
-                module = self.import_and_define_module(module, name, stmt.ctx)
+                module = self._import_and_define_module(module, name, stmt.ctx)
 
-    def load_import_from(
+    def _load_import_from(
         self, base_name: str, context: PythonContext, stmt: PyImportFrom
     ):
         """
@@ -213,7 +228,7 @@ class PythonAnalyzer:
                 else:
                     # Otherwise, attempt to import a submodule with the name.
                     try:
-                        self.import_and_define_module(imported_module, name, stmt.ctx)
+                        self._import_and_define_module(imported_module, name, stmt.ctx)
                         symbol.target = imported_scope[name]
                     except PyImportError as e:
                         e.message = (
@@ -233,7 +248,7 @@ class PythonAnalyzer:
                 except PyDuplicateSymbolError as e:
                     context.errors.append(e.with_context(stmt.ctx))
 
-    def import_and_define_module(
+    def _import_and_define_module(
         self, module: PyModule, name: str, ctx: ParserRuleContext
     ) -> PyModule:
         """
@@ -288,7 +303,7 @@ class PythonAnalyzer:
             for module in self.pending_second_pass:
                 visitor = PythonVisitor(module.context)
                 visitor.second_pass(module.source.tree)
-                self.report_module_errors(module)
+                self._report_module_errors(module)
 
         self.pending_second_pass.clear()
 

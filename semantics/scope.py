@@ -53,7 +53,6 @@ class SymbolTable:
             raise PyDuplicateSymbolError(symbol, self)
         self.symbols[symbol.name] = symbol
         symbol.set_parent_scope(self)
-        # print(f"Defined symbol {symbol.name} in scope {self.name}")
 
     def lookup(
         self,

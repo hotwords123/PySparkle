@@ -1,6 +1,8 @@
+import functools
 from pathlib import Path
 from typing import Callable
 
+from core.source import PythonSource
 from semantics.base import SemanticError
 from semantics.entity import PyModule, PyPackage
 
@@ -41,6 +43,9 @@ class ModuleManager:
             return self.modules[name]
 
         module = self.find_module(name)
+        if module.path is not None:
+            module.loader = functools.partial(PythonSource.parse_file, module.path)
+
         self.load_module(module)
         return module
 
@@ -95,6 +100,10 @@ class ModuleManager:
             raise
 
         module.loaded = True
+
+    def unload_module(self, module: PyModule):
+        if module.name in self.modules:
+            del self.modules[module.name]
 
 
 class PyImportError(SemanticError):

@@ -1,3 +1,5 @@
+import functools
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
@@ -10,12 +12,19 @@ from dominate.util import text as dom_text
 from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
+from core.source import PythonSource
 from grammar import PythonParser
 from semantics.entity import PyModule
 from semantics.token import TokenKind
 
 
 def main(args):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(name)s|%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
+
     source_path = Path(args.input)
 
     assert "." not in source_path.stem, "source file name should not contain '.'"
@@ -38,7 +47,8 @@ def main(args):
     analyzer.importer.search_paths = search_paths
 
     module = PyModule(source_path.stem, source_path)
-    analyzer.importer.load_module(module)
+    module.loader = functools.partial(PythonSource.parse_file, source_path)
+    analyzer.load_module(module)
 
     with analyzer.set_type_context():
         doc = generate_html(module)
