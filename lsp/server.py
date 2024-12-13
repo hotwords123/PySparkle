@@ -1,6 +1,7 @@
 import functools
 import logging
 from pathlib import Path
+from typing import Optional
 
 from antlr4.Token import CommonToken
 from lsprotocol import types as lsp
@@ -11,14 +12,29 @@ from typeshed_client import get_search_context
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource
 from grammar import PythonParser
-from lsp.utils import snake_case_to_camel_case
+from lsp.utils import (
+    snake_case_to_camel_case,
+    token_at_position,
+    token_end_position,
+    token_start_position,
+)
 from semantics.entity import PyModule
 from semantics.token import TokenKind, TokenModifier
+from semantics.types import (
+    PyClassType,
+    PyFunctionType,
+    PyGenericAlias,
+    PyModuleType,
+    PyTypeVarDef,
+    PyTypeVarType,
+)
 
 TOKEN_KINDS = [kind.value for kind in TokenKind]
 TOKEN_MODIFIERS = [
     snake_case_to_camel_case(modifier.name) for modifier in TokenModifier
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class PythonLanguageServer(LanguageServer):
@@ -31,9 +47,10 @@ class PythonLanguageServer(LanguageServer):
 
         search_context = get_search_context()
         self.analyzer = PythonAnalyzer(search_paths=[search_context.typeshed])
-        self.analyzer.load_typeshed()
-
         self.documents: dict[str, PyModule] = {}
+
+    def init(self):
+        self.analyzer.load_typeshed()
 
     def parse_document(self, doc: TextDocument):
         path = Path(doc.path)
@@ -101,24 +118,66 @@ class PythonLanguageServer(LanguageServer):
 
         return lsp.SemanticTokens(data=data)
 
+    def get_hover(self, uri: str, position: lsp.Position) -> Optional[lsp.Hover]:
+        if uri not in self.documents:
+            return None
+
+        module = self.documents[uri]
+        token = token_at_position(module.source.stream.tokens, position)
+        if token is None:
+            return None
+
+        type_ = module.context.get_token_entity_type(token)
+        if type_ is None:
+            return None
+
+        if isinstance(type_, PyModuleType):
+            result = f"(module) {type_.module.name}"
+
+        elif isinstance(type_, PyClassType):
+            result = f"(class) {type_.cls.full_name}"
+
+        elif isinstance(type_, PyFunctionType):
+            result = f"({type_.func.tag}) {type_.func.full_name}"
+
+        elif isinstance(type_, PyTypeVarDef | PyTypeVarType | PyGenericAlias):
+            result = f"(type) {type_}"
+
+        else:
+            result = f"(variable) {token.text}: {type_}"
+
+        return lsp.Hover(
+            contents=lsp.MarkupContent(
+                kind=lsp.MarkupKind.Markdown,
+                value=f"```python\n{result}\n```",
+            ),
+            range=lsp.Range(
+                start=token_start_position(token),
+                end=token_end_position(token),
+            ),
+        )
+
 
 server = PythonLanguageServer()
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: PythonLanguageServer, params: lsp.DidOpenTextDocumentParams):
+    logger.info(f"Opened document: {params.text_document.uri}")
     doc = ls.workspace.get_text_document(params.text_document.uri)
     ls.parse_document(doc)
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_CHANGE)
 def did_change(ls: PythonLanguageServer, params: lsp.DidChangeTextDocumentParams):
+    logger.info(f"Changed document: {params.text_document.uri}")
     doc = ls.workspace.get_text_document(params.text_document.uri)
     ls.parse_document(doc)
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_CLOSE)
 def did_close(ls: PythonLanguageServer, params: lsp.DidCloseTextDocumentParams):
+    logger.info(f"Closed document: {params.text_document.uri}")
     ls.close_document(params.text_document.uri)
 
 
@@ -132,4 +191,11 @@ def did_close(ls: PythonLanguageServer, params: lsp.DidCloseTextDocumentParams):
 def semantic_tokens_full(
     ls: PythonLanguageServer, params: lsp.SemanticTokensParams
 ) -> Optional[lsp.SemanticTokens]:
+    logger.info(f"Requested semantic tokens: {params.text_document.uri}")
     return ls.get_semantic_tokens(params.text_document.uri)
+
+
+@server.feature(lsp.TEXT_DOCUMENT_HOVER)
+def hover(ls: PythonLanguageServer, params: lsp.HoverParams) -> Optional[lsp.Hover]:
+    logger.info(f"Requested hover: {params.text_document.uri}")
+    return ls.get_hover(params.text_document.uri, params.position)

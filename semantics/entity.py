@@ -372,20 +372,21 @@ class PyFunction(_ModifiersMixin, PyEntity):
         # The types returned by a return statement. Used for type inference.
         self.returned_types: list[PyType] = []
 
-    def __str__(self) -> str:
-        if self.is_method:
+    @property
+    def tag(self) -> str:
+        if self.cls is not None:
             if self.has_modifier("property"):
-                tag = "property"
-            elif self.has_modifier("classmethod"):
-                tag = "classmethod"
-            elif self.has_modifier("staticmethod"):
-                tag = "staticmethod"
-            else:
-                tag = "method"
+                return "property"
+            if self.has_modifier("classmethod"):
+                return "classmethod"
+            if self.has_modifier("staticmethod"):
+                return "staticmethod"
+            return "method"
+        return "function"
 
-            return f"<{tag} {self.cls.name}.{self.name}>"
-
-        return f"<function {self.name}>"
+    def __str__(self) -> str:
+        name = f"{self.cls.name}.{self.name}" if self.cls else self.name
+        return f"<{self.tag} {name}>"
 
     def get_type(self) -> PyFunctionType:
         return PyFunctionType(self)

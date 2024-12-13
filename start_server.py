@@ -10,4 +10,5 @@ if __name__ == "__main__":
         format="%(asctime)s [%(name)s|%(levelname)s] %(message)s",
         handlers=[logging.StreamHandler()],
     )
+    server.init()
     start_server(server)
