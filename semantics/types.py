@@ -1139,6 +1139,19 @@ class PyUnionType(PyType):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PyUnionType) and self.items == other.items
 
+    def attr_scopes(self) -> Iterator[TypedScope]:
+        # TODO: Handle conflicts between items.
+        for item in self.items:
+            yield from item.attr_scopes()
+
+    def get_attr(self, name: str) -> Optional[TypedSymbol]:
+        # TODO: Currently, only the first matching attribute is returned.
+        for item in self.items:
+            if attr := item.get_attr(name):
+                return attr
+
+        return None
+
     def can_be_truthy(self) -> bool:
         return any(t.can_be_truthy() for t in self.items)
 
@@ -1151,7 +1164,22 @@ class PyUnionType(PyType):
     def extract_falsy(self) -> PyType:
         return PyUnionType.from_items(t.extract_falsy() for t in self.items)
 
-    # TODO: Implement the rest of the methods, or the union type will behave like Any.
+    def get_return_type(self, args: "PyArguments") -> PyType:
+        return PyUnionType.from_items(t.get_return_type(args) for t in self.items)
+
+    def get_subscripted_type(self, key: PyType) -> PyType:
+        return PyUnionType.from_items(t.get_subscripted_type(key) for t in self.items)
+
+    def get_inferred_type(self) -> PyType:
+        return PyUnionType.from_items(t.get_inferred_type() for t in self.items)
+
+    def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
+        # TODO: Currently, only the first matching type is returned.
+        for item in self.items:
+            if (type_args := item.check_protocol(protocol)) is not None:
+                return type_args
+
+        return None
 
     @staticmethod
     def from_items(items: Iterable[PyType]) -> PyType:
