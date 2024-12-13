@@ -28,7 +28,6 @@ from semantics.types import (
     PyGenericAlias,
     PyModuleType,
     PyTypeVarDef,
-    PyTypeVarType,
 )
 
 TOKEN_KINDS = [kind.value for kind in TokenKind]
@@ -142,7 +141,7 @@ class PythonLanguageServer(LanguageServer):
         elif isinstance(type_, PyFunctionType):
             result = f"({type_.func.tag}) {type_.func.full_name}"
 
-        elif isinstance(type_, PyTypeVarDef | PyTypeVarType | PyGenericAlias):
+        elif isinstance(type_, PyTypeVarDef | PyGenericAlias):
             result = f"(type) {type_}"
 
         else:
