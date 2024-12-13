@@ -3,14 +3,16 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from antlr4 import FileStream
 from antlr4.Token import CommonToken
 from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
+from pygls.uris import from_fs_path
 from pygls.workspace import TextDocument
 from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
-from core.source import PythonSource
+from core.source import PythonSource, UriSourceStream
 from grammar import PythonParser
 from lsp.utils import (
     snake_case_to_camel_case,
@@ -157,6 +159,39 @@ class PythonLanguageServer(LanguageServer):
             ),
         )
 
+    def get_definition(
+        self, uri: str, position: lsp.Position
+    ) -> Optional[lsp.Location]:
+        if uri not in self.documents:
+            return None
+
+        module = self.documents[uri]
+        token = token_at_position(module.source.stream.tokens, position)
+        if token is None:
+            return None
+
+        symbol = module.context.get_token_target(token)
+        if symbol is None or symbol.token is None:
+            return None
+
+        input_stream = symbol.token.getInputStream()
+        if isinstance(input_stream, FileStream):
+            target_uri = from_fs_path(input_stream.fileName)
+            if target_uri is None:
+                return None
+        elif isinstance(input_stream, UriSourceStream):
+            target_uri = input_stream.uri
+        else:
+            return None
+
+        return lsp.Location(
+            uri=target_uri,
+            range=lsp.Range(
+                start=token_start_position(symbol.token),
+                end=token_end_position(symbol.token),
+            ),
+        )
+
 
 server = PythonLanguageServer()
 
@@ -199,3 +234,11 @@ def semantic_tokens_full(
 def hover(ls: PythonLanguageServer, params: lsp.HoverParams) -> Optional[lsp.Hover]:
     logger.info(f"Requested hover: {params.text_document.uri}")
     return ls.get_hover(params.text_document.uri, params.position)
+
+
+@server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
+def goto_definition(
+    ls: PythonLanguageServer, params: lsp.DefinitionParams
+) -> Optional[lsp.Location]:
+    logger.info(f"Requested definition: {params.text_document.uri}")
+    return ls.get_definition(params.text_document.uri, params.position)

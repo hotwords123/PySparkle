@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import NamedTuple
 
 from antlr4 import CommonTokenStream, FileStream, InputStream, ParserRuleContext
@@ -22,7 +23,9 @@ class PythonSource(NamedTuple):
         return cls(input_stream, lexer, stream, parser, tree)
 
     @classmethod
-    def parse_file(cls, filename: str) -> "PythonSource":
+    def parse_file(cls, filename: str | Path) -> "PythonSource":
+        if isinstance(filename, Path):
+            filename = str(filename)
         input_stream = FileStream(filename, encoding="utf-8")
         return cls.from_stream(input_stream)
 
