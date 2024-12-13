@@ -8,10 +8,10 @@ from antlr4.tree.Tree import TerminalNode
 
 from grammar import PythonParser
 
-from .entity import PyClass, PyEntity, PyFunction, PyVariable
+from .entity import PyClass, PyEntity, PyFunction, PyModule, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
-from .token import TokenInfo, TokenKind
+from .token import TOKEN_KIND_MAP, TokenInfo, TokenKind
 from .types import (
     PyClassType,
     PyFunctionType,
@@ -305,6 +305,54 @@ class PythonContext:
         # The keyword parameter is not found.
         self.set_node_info(node, kind=TokenKind.VARIABLE)
         return PyType.ANY
+
+    def get_token_kind(self, token: CommonToken) -> TokenKind:
+        if token_info := self.token_info.get(token):
+            if token_kind := token_info.get("kind"):
+                return token_kind
+
+            if symbol := token_info.get("symbol"):
+                symbol = symbol.resolve()
+
+                match symbol.type:
+                    case SymbolType.VARIABLE | SymbolType.PARAMETER:
+                        return TokenKind.VARIABLE
+                    case SymbolType.FUNCTION:
+                        pass  # May be a @property method.
+                    case SymbolType.CLASS:
+                        return TokenKind.CLASS
+                    case SymbolType.GLOBAL | SymbolType.NONLOCAL | SymbolType.IMPORTED:
+                        pass  # Unresolved symbols.
+
+                if entity := symbol.resolve_entity():
+                    if isinstance(entity, PyModule):
+                        return TokenKind.MODULE
+
+                    if isinstance(entity, PyFunction):
+                        if entity.has_modifier("property"):
+                            return TokenKind.VARIABLE
+                        return TokenKind.FUNCTION
+
+                    return TokenKind.VARIABLE
+
+        return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
+
+    def get_token_target(self, token: CommonToken) -> Optional[Symbol]:
+        if token_info := self.token_info.get(token):
+            if symbol := token_info.get("symbol"):
+                return symbol.resolve()
+
+        return None
+
+    def get_token_entity_type(self, token: CommonToken) -> Optional[PyType]:
+        if token_info := self.token_info.get(token):
+            if type_ := token_info.get("type"):
+                return type_
+
+            if symbol := token_info.get("symbol"):
+                return symbol.get_type()
+
+        return None
 
 
 @dataclasses.dataclass

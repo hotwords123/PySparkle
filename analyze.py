@@ -11,64 +11,8 @@ from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
 from grammar import PythonParser
-from semantics.entity import PyFunction, PyModule
-from semantics.structure import PythonContext
-from semantics.symbol import Symbol, SymbolType
-from semantics.token import TOKEN_KIND_MAP, TokenKind
-from semantics.types import PyType
-
-
-def get_token_kind(context: PythonContext, token: CommonToken) -> TokenKind:
-    if token_info := context.token_info.get(token):
-        if token_kind := token_info.get("kind"):
-            return token_kind
-
-        if symbol := token_info.get("symbol"):
-            symbol = symbol.resolve()
-
-            match symbol.type:
-                case SymbolType.VARIABLE | SymbolType.PARAMETER:
-                    return TokenKind.VARIABLE
-                case SymbolType.FUNCTION:
-                    pass  # May be a @property method.
-                case SymbolType.CLASS:
-                    return TokenKind.CLASS
-                case SymbolType.GLOBAL | SymbolType.NONLOCAL | SymbolType.IMPORTED:
-                    pass  # Unresolved symbols.
-
-            if entity := symbol.resolve_entity():
-                if isinstance(entity, PyModule):
-                    return TokenKind.MODULE
-
-                if isinstance(entity, PyFunction):
-                    if entity.has_modifier("property"):
-                        return TokenKind.VARIABLE
-                    return TokenKind.FUNCTION
-
-                return TokenKind.VARIABLE
-
-    return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
-
-
-def get_token_target(context: PythonContext, token: CommonToken) -> Optional[Symbol]:
-    if token_info := context.token_info.get(token):
-        if symbol := token_info.get("symbol"):
-            return symbol.resolve()
-
-    return None
-
-
-def get_token_entity_type(
-    context: PythonContext, token: CommonToken
-) -> Optional[PyType]:
-    if token_info := context.token_info.get(token):
-        if type_ := token_info.get("type"):
-            return type_
-
-        if symbol := token_info.get("symbol"):
-            return symbol.get_type()
-
-    return None
+from semantics.entity import PyModule
+from semantics.token import TokenKind
 
 
 def main(args):
@@ -127,7 +71,7 @@ def generate_html(module: PyModule) -> dominate.document:
                     }:
                         continue
 
-                    token_kind = get_token_kind(module.context, token)
+                    token_kind = module.context.get_token_kind(token)
                     if token_kind is TokenKind.NONE:
                         dom_text(token.text)
                     else:
@@ -136,11 +80,11 @@ def generate_html(module: PyModule) -> dominate.document:
                             cls=f"token token-{token_kind.value}",
                         )
 
-                        if entity_type := get_token_entity_type(module.context, token):
+                        if entity_type := module.context.get_token_entity_type(token):
                             attrs["title"] = str(entity_type)
 
                         if (
-                            (target := get_token_target(module.context, token))
+                            (target := module.context.get_token_target(token))
                             and (target_token := target.token)
                             and target_token.source == token_source
                         ):
