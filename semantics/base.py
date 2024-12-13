@@ -32,6 +32,10 @@ class SemanticError(Exception):
             self.token = node.start
             self.end_token = node.stop
 
+    def with_context(self, node: ParseTree):
+        self.set_context(node)
+        return self
+
 
 class PySyntaxError(SemanticError):
     pass

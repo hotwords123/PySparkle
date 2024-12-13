@@ -4,9 +4,11 @@ from typing import TYPE_CHECKING, Iterator, Literal, Optional
 
 from .scope import ScopeType, SymbolTable
 from .types import (
+    CollectTypeVars,
     PyArguments,
     PyClassType,
     PyFunctionType,
+    PyGenericAlias,
     PyInstanceType,
     PyModuleType,
     PySelfType,
@@ -14,6 +16,7 @@ from .types import (
     PyTypeArgs,
     PyTypeError,
     PyTypeVar,
+    PyTypeVarType,
     get_stub_class,
     report_type_error,
 )
@@ -265,6 +268,90 @@ class PyClass(_ModifiersMixin, PyEntity):
                 result.append(object_cls)
 
         return result
+
+    def parse_arguments(self, ctx: "PythonParser.ArgumentsContext"):
+        """
+        Parses the base classes and the type parameters of the class from the
+        arguments of the class definition.
+        """
+        assert self.arguments is not None
+        assert not self.bases and not self.type_params
+
+        # Whether the class has a generic base class.
+        has_generic_base = False
+
+        # NOTE: In theory, we should handle starred arguments here, but in
+        # practice, syntaxes like `class C(*args):` are hardly ever used.
+        for arg in self.arguments.args:
+            if isinstance(arg, PyClassType):
+                self.bases.append(PyInstanceType(arg.cls))
+            elif isinstance(arg, PyGenericAlias):
+                # TODO: Verify that the generic alias is a valid base class.
+                has_generic_base = True
+                self.bases.append(arg.get_instance_type(convert_tuples=False))
+            else:
+                report_type_error(
+                    PyTypeError(
+                        f"invalid base class {arg} in class definition",
+                    ).with_context(ctx)
+                )
+
+        # Check if the class has typing.Generic as a base class.
+        if any(
+            (generic_base := base).cls.full_name == "typing.Generic"
+            for base in self.bases
+        ):
+            # Collect the type variable arguments as type parameters.
+            for arg_type in generic_base.type_args:
+                if isinstance(arg_type, PyTypeVarType):
+                    if arg_type.var not in self.type_params:
+                        self.type_params.append(arg_type.var)
+                    else:
+                        report_type_error(
+                            PyTypeError(
+                                f"duplicate type variable argument {arg_type} to Generic "
+                                f"(in class {self.full_name!r})",
+                            ).with_context(ctx)
+                        )
+                else:
+                    report_type_error(
+                        PyTypeError(
+                            f"invalid type argument {arg_type} to Generic "
+                            f"(in class {self.full_name!r})",
+                        ).with_context(ctx)
+                    )
+
+        elif has_generic_base:
+            # Collect the type variables from the base classes.
+            visitor = CollectTypeVars()
+            for base in self.bases:
+                if base.type_args is not None:
+                    visitor.visit_type_args(base.type_args)
+
+            self.type_params.extend(visitor.type_vars)
+
+            # Add typing.Generic as an implicit base class.
+            type_args = tuple(PyTypeVarType(var) for var in visitor.type_vars)
+            generic_type = PyInstanceType.from_stub("typing.Generic", type_args)
+            self.bases.append(generic_type)
+
+        # Check if the class is a protocol.
+        if any(base.cls.full_name == "typing.Protocol" for base in self.bases):
+            self.set_modifier("protocol")
+
+            # Verify that all base classes are protocols.
+            for base in self.bases:
+                if base.cls.full_name not in (
+                    "typing.Protocol",
+                    "typing.Generic",
+                    "builtins.object",
+                ) and not base.cls.has_modifier("protocol"):
+                    report_type_error(
+                        PyTypeError(
+                            f"non-protocol base class {base.cls.full_name} in protocol "
+                            f"(in class {self.full_name!r})",
+                        ).with_context(ctx)
+                    )
 
 
 class PyFunction(_ModifiersMixin, PyEntity):

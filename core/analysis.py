@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from typing import Final, Optional
+from typing import Final
 
 from antlr4 import ParserRuleContext
 
@@ -107,7 +107,7 @@ class PythonAnalyzer:
                 cls = PyClass(name, cls_scope)
                 # XXX: This is a hack to deal with the aliasing of special forms.
                 cls.set_full_name(f"typing.{name}")
-                cls.modifiers.add("special")
+                cls.set_modifier("special")
                 cls.arguments = []
                 symbol = Symbol(SymbolType.CLASS, name, entity=cls)
                 scope.define(symbol)
@@ -139,8 +139,7 @@ class PythonAnalyzer:
         try:
             imported_module = self.importer.import_module(".".join(stmt.path))
         except PyImportError as e:
-            e.set_context(stmt.ctx)
-            context.errors.append(e)
+            context.errors.append(e.with_context(stmt.ctx))
             return
 
         if stmt.alias is not None:
@@ -185,8 +184,7 @@ class PythonAnalyzer:
             imported_module = self.importer.import_module(".".join(path))
 
         except PyImportError as e:
-            e.set_context(stmt.ctx)
-            context.errors.append(e)
+            context.errors.append(e.with_context(stmt.ctx))
             return
 
         imported_scope = imported_module.context.global_scope
@@ -210,8 +208,7 @@ class PythonAnalyzer:
                                 self.importer.import_module(f"{base_name}.{name}")
                             )
                         except PyImportError as e:
-                            e.set_context(stmt.ctx)
-                            context.errors.append(e)
+                            context.errors.append(e.with_context(stmt.ctx))
 
                 else:
                     # Otherwise, attempt to import a submodule with the name.
@@ -222,8 +219,7 @@ class PythonAnalyzer:
                         e.message = (
                             f"Cannot import name {name!r} from {imported_module.name!r}"
                         )
-                        e.set_context(stmt.ctx)
-                        context.errors.append(e)
+                        context.errors.append(e.with_context(stmt.ctx))
 
         else:
             # Import all public symbols from the module.
@@ -235,8 +231,7 @@ class PythonAnalyzer:
                 try:
                     context.global_scope.define(symbol)
                 except PyDuplicateSymbolError as e:
-                    e.set_context(stmt.ctx)
-                    context.errors.append(e)
+                    context.errors.append(e.with_context(stmt.ctx))
 
     def import_and_define_module(
         self, module: PyModule, name: str, ctx: ParserRuleContext
@@ -258,8 +253,7 @@ class PythonAnalyzer:
         try:
             module.context.global_scope.define(symbol)
         except PyDuplicateSymbolError as e:
-            e.set_context(ctx)
-            module.context.errors.append(e)
+            module.context.errors.append(e.with_context(ctx))
 
         return submodule
 

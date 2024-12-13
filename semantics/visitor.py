@@ -20,11 +20,9 @@ from .structure import (
 from .symbol import Symbol, SymbolType
 from .token import TokenKind
 from .types import (
-    CollectTypeVars,
     PyArguments,
     PyClassType,
     PyDictDisplayItem,
-    PyGenericAlias,
     PyInstanceType,
     PyKeywordArgument,
     PyKvPair,
@@ -515,27 +513,11 @@ class PythonVisitor(PythonParserVisitor):
             entity.decorators = decorators
             for decorator in decorators:
                 if modifier := _modifier_from_decorator(decorator, _CLASS_MODIFIERS):
-                    entity.modifiers.add(modifier)
+                    entity.set_modifier(modifier)
 
             # Handle class arguments.
             entity.arguments = arguments
-
-            # NOTE: In theory, we should handle starred arguments here, but in
-            # practice, syntaxes like `class C(*args):` are hardly ever used.
-            visitor = CollectTypeVars()
-
-            for arg in arguments.args:
-                if isinstance(arg, PyClassType):
-                    entity.bases.append(PyInstanceType(arg.cls))
-                elif isinstance(arg, PyGenericAlias):
-                    # TODO: Verify that the generic alias is a valid base class.
-                    entity.bases.append(arg.get_instance_type(convert_tuples=False))
-                    visitor.visit_type_args(arg.args)
-
-            if any(base.cls.full_name == "typing.Protocol" for base in entity.bases):
-                entity.modifiers.add("protocol")
-
-            entity.type_params.extend(visitor.type_vars)
+            entity.parse_arguments(ctx.arguments())
 
         with self.context.scope_guard(scope), self.context.set_parent_class(entity):
             if type_params := ctx.typeParams():
@@ -589,7 +571,7 @@ class PythonVisitor(PythonParserVisitor):
 
             for decorator in decorators:
                 if modifier := _modifier_from_decorator(decorator, _FUNCTION_MODIFIERS):
-                    entity.modifiers.add(modifier)
+                    entity.set_modifier(modifier)
 
         if expression := ctx.expression():
             annotation = self.visitExpression(expression)
