@@ -28,11 +28,11 @@
   color: #6A9955;
 }
 
-.token-keyword {
+.token-primitive {
   color: #569CD6;
 }
 
-.token-control {
+.token-keyword {
   color: #C586C0;
 }
 

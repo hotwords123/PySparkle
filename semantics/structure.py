@@ -11,7 +11,7 @@ from grammar import PythonParser
 from .entity import PyClass, PyEntity, PyFunction, PyModule, PyVariable
 from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
-from .token import TOKEN_KIND_MAP, TokenInfo, TokenKind
+from .token import TOKEN_KIND_MAP, TokenInfo, TokenKind, TokenModifier
 from .types import (
     PyClassType,
     PyFunctionType,
@@ -84,7 +84,14 @@ class PythonContext:
 
     def set_node_info(self, node: TerminalNode, /, **kwargs: Unpack[TokenInfo]):
         token = node.getSymbol()
-        self.token_info.setdefault(token, TokenInfo()).update(**kwargs)
+        modifiers = kwargs.pop("modifiers", None)
+
+        token_info = self.token_info.setdefault(token, TokenInfo())
+        token_info.update(**kwargs)
+
+        if modifiers is not None:
+            token_info.setdefault("modifiers", TokenModifier(0))
+            token_info["modifiers"] |= modifiers
 
     def define_variable(
         self,
@@ -336,6 +343,13 @@ class PythonContext:
                     return TokenKind.VARIABLE
 
         return TOKEN_KIND_MAP.get(token.type, TokenKind.NONE)
+
+    def get_token_modifiers(self, token: CommonToken) -> TokenModifier:
+        if token_info := self.token_info.get(token):
+            if token_modifiers := token_info.get("modifiers"):
+                return token_modifiers
+
+        return TokenModifier(0)
 
     def get_token_target(self, token: CommonToken) -> Optional[Symbol]:
         if token_info := self.token_info.get(token):

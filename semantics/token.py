@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, IntFlag, auto
 from typing import TYPE_CHECKING, TypedDict
 
 from grammar import PythonParser
@@ -12,6 +12,7 @@ class TokenInfo(TypedDict, total=False):
     kind: "TokenKind"
     symbol: "Symbol"
     type: "PyType"
+    modifiers: "TokenModifier"
 
 
 class TokenKind(Enum):
@@ -19,7 +20,7 @@ class TokenKind(Enum):
     COMMENT = "comment"
 
     KEYWORD = "keyword"
-    CONTROL = "control"
+    PRIMITIVE = "primitive"
 
     IDENTIFIER = "identifier"
     VARIABLE = "variable"
@@ -38,11 +39,16 @@ class TokenKind(Enum):
     ERROR = "error"
 
 
+class TokenModifier(IntFlag):
+    READONLY = auto()
+    ASYNC = auto()
+
+
 TOKEN_KIND_SPEC = {
     TokenKind.COMMENT: {
         PythonParser.COMMENT,
     },
-    TokenKind.KEYWORD: {
+    TokenKind.PRIMITIVE: {
         PythonParser.IN,
         PythonParser.CLASS,
         PythonParser.IS,
@@ -55,7 +61,7 @@ TOKEN_KIND_SPEC = {
         PythonParser.ASYNC,
         PythonParser.OR,
     },
-    TokenKind.CONTROL: {
+    TokenKind.KEYWORD: {
         PythonParser.AWAIT,
         PythonParser.ELSE,
         PythonParser.IMPORT,
