@@ -283,12 +283,6 @@ class PyType(ABC):
         """
         return PyType.ANY
 
-    def get_awaited_type(self) -> "PyType":
-        """
-        Returns the type obtained by awaiting the type.
-        """
-        return PyType.ANY
-
     def get_annotated_type(self) -> "PyType":
         """
         Returns the type of the annotation.
@@ -365,6 +359,38 @@ class PyType(ABC):
             return type_args
         else:
             return protocol.default_type_args()
+
+    def get_iterated_type(self, is_async: bool = False) -> "PyType":
+        """
+        Returns the type of the elements of the iterable.
+
+        Args:
+            is_async: Whether the iteration is asynchronous.
+        """
+        (item_type,) = self.check_protocol_or_any(
+            get_stub_class(
+                "typing.AsyncIterable" if is_async else "typing.Iterable", dummy=True
+            )
+        )
+        return item_type
+
+    def get_mapped_types(self) -> "PyKvPair":
+        """
+        Returns the type of the key-value pairs of the mapping.
+        """
+        key_type, value_type = self.check_protocol_or_any(
+            get_stub_class("typing.Mapping", dummy=True)
+        )
+        return PyKvPair(key_type, value_type)
+
+    def get_awaited_type(self) -> "PyType":
+        """
+        Returns the type of the awaited value.
+        """
+        (result_type,) = self.check_protocol_or_any(
+            get_stub_class("typing.Awaitable", dummy=True)
+        )
+        return result_type
 
 
 @final
@@ -478,9 +504,6 @@ class PyInstanceBase(PyType, ABC):
 
     def get_subscripted_type(self, key: PyType) -> PyType:
         return self.get_method_return_type("__getitem__", PyArguments(args=[key]))
-
-    def get_awaited_type(self) -> PyType:
-        return self.get_method_return_type("__await__", PyArguments())
 
     def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
         assert protocol.has_modifier("protocol")
@@ -814,7 +837,11 @@ class PyFunctionType(PyInstanceBase):
         return f"<{self.__class__.__name__} function={self.func!r}>"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, PyFunctionType) and self.func is other.func
+        return (
+            isinstance(other, PyFunctionType)
+            and self.func is other.func
+            and self.mapping == other.mapping
+        )
 
     @property
     def entity(self) -> "PyEntity":
@@ -1061,10 +1088,7 @@ class PyUnpack(PyType):
             return self.inner.get_item_type()
 
         # Check if the inner type is an iterable.
-        (value_type,) = self.inner.check_protocol_or_any(
-            get_stub_class("typing.Iterable", dummy=True)
-        )
-        return value_type
+        return self.inner.get_iterated_type()
 
     def get_unpacked_kvpair(self) -> "PyKvPair":
         """
@@ -1073,10 +1097,7 @@ class PyUnpack(PyType):
         assert self.kvpair
 
         # The inner type should be a Mapping type.
-        key_type, value_type = self.inner.check_protocol_or_any(
-            get_stub_class("typing.Mapping", dummy=True)
-        )
-        return PyKvPair(key_type, value_type)
+        return self.inner.get_mapped_types()
 
 
 @final
@@ -1200,9 +1221,6 @@ class _PyNeverType(PyType):
         return PyType.NEVER
 
     def get_subscripted_type(self, key: PyType) -> PyType:
-        return PyType.NEVER
-
-    def get_awaited_type(self) -> PyType:
         return PyType.NEVER
 
 

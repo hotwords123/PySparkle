@@ -870,13 +870,10 @@ class PythonVisitor(PythonParserVisitor):
     def visitForStmt(self, ctx: PythonParser.ForStmtContext):
         iter_type = self.visitStarExpressions(ctx.starExpressions())
 
-        (value_type,) = iter_type.check_protocol_or_any(
-            get_stub_class(
-                "typing.AsyncIterable" if ctx.ASYNC() else "typing.Iterable", dummy=True
-            )
+        self.visitStarTargets(
+            ctx.starTargets(),
+            value_type=iter_type.get_iterated_type(is_async=ctx.ASYNC() is not None),
         )
-
-        self.visitStarTargets(ctx.starTargets(), value_type=value_type)
 
         self.visitBlock(ctx.block())
 
@@ -1526,12 +1523,7 @@ class PythonVisitor(PythonParserVisitor):
             iter_type = self.visitLogical(ctx.logical(0))
 
         if self.pass_num == 2:
-            (value_type,) = iter_type.check_protocol_or_any(
-                get_stub_class(
-                    "typing.AsyncIterable" if ctx.ASYNC() else "typing.Iterable",
-                    dummy=True,
-                )
-            )
+            value_type = iter_type.get_iterated_type(is_async=ctx.ASYNC() is not None)
         else:
             value_type = PyType.ANY
 
