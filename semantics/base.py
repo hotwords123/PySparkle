@@ -13,24 +13,23 @@ class SemanticError(Exception):
         end_token: Optional[CommonToken] = None,
     ):
         self.message = message
-        self.token = token
-        self.end_token = end_token
+        self.range: Optional[tuple[CommonToken, CommonToken]] = (
+            (token, end_token or token) if token else None
+        )
 
     def __str__(self):
         message = self.message
-        if self.token is not None:
-            message += f" at {self.token.line}:{self.token.column}"
-            if self.end_token is not None:
-                message += f" to {self.end_token.line}:{self.end_token.column}"
+        if self.range is not None:
+            start, end = self.range
+            end_line, end_column = get_token_end_position(end)
+            message += f" at {start.line}:{start.column} to {end_line}:{end_column}"
         return message
 
     def set_context(self, node: ParseTree):
         if isinstance(node, TerminalNode):
-            self.token = node.getSymbol()
-            self.end_token = None
+            self.range = node.getSymbol(), node.getSymbol()
         elif isinstance(node, ParserRuleContext):
-            self.token = node.start
-            self.end_token = node.stop
+            self.range = node.start, node.stop
 
     def with_context(self, node: ParseTree):
         self.set_context(node)
@@ -39,3 +38,20 @@ class SemanticError(Exception):
 
 class PySyntaxError(SemanticError):
     pass
+
+
+def get_token_end_position(token: CommonToken) -> tuple[int, int]:
+    """
+    Returns the end position of a token in the source code.
+
+    Args:
+        token: The token to get the end position of.
+
+    Returns:
+        A tuple of the line and column of the end position.
+    """
+    lines = token.text.split("\n")
+    if len(lines) == 1:
+        return token.line, token.column + len(token.text)
+    else:
+        return token.line + len(lines) - 1, len(lines[-1])

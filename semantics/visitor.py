@@ -180,7 +180,7 @@ class PythonVisitor(PythonParserVisitor):
     def _report_error(self, error: Exception, node: Optional[ParseTree] = None):
         if isinstance(error, SemanticError):
             node = node or self._current_ctx
-            if error.token is None and node is not None:
+            if error.range is None and node is not None:
                 error.set_context(node)
 
         else:
@@ -239,7 +239,7 @@ class PythonVisitor(PythonParserVisitor):
         try:
             return PyLiteralType(literal_eval(node.getText()))
         except ValueError as e:
-            self._report_error(PyTypeError(str(e), node))
+            self._report_error(PyTypeError(str(e)).with_context(node))
             return PyType.ANY
 
     def visitErrorNode(self, node: ErrorNode):
