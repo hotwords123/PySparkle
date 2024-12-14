@@ -8,7 +8,7 @@ from semantics.entity import PyClass, PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
 from semantics.structure import PyImportFrom, PyImportName, PythonContext
 from semantics.symbol import Symbol, SymbolType
-from semantics.types import get_stub_class, set_type_context
+from semantics.types import PyArguments, get_stub_class, set_type_context
 from semantics.visitor import PythonVisitor
 
 from .modules import ModuleManager, PyImportError
@@ -122,7 +122,7 @@ class PythonAnalyzer:
                 # XXX: This is a hack to deal with the aliasing of special forms.
                 cls.set_full_name(f"typing.{name}")
                 cls.set_modifier("special")
-                cls.arguments = []
+                cls.arguments = PyArguments()
                 symbol = Symbol(SymbolType.CLASS, name, entity=cls)
                 scope.define(symbol)
 

@@ -333,9 +333,9 @@ class PyType(ABC):
             case True, True:
                 return PyInstanceType.from_stub("builtins.bool")
             case True, False:
-                return PyLiteralType(True)
-            case False, True:
                 return PyLiteralType(False)
+            case False, True:
+                return PyLiteralType(True)
             case False, False:
                 return PyType.NEVER
 
