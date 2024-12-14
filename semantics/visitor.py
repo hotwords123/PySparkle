@@ -246,6 +246,19 @@ class PythonVisitor(PythonParserVisitor):
         if self.pass_num == 1:
             self.context.set_node_info(node, kind=TokenKind.ERROR)
 
+    # invalidBlock: INDENT statements DEDENT;
+    def visitInvalidBlock(self, ctx: PythonParser.InvalidBlockContext):
+        if self.pass_num == 1:
+            self._report_error(PySyntaxError("unexpected indent"), ctx)
+
+        return self.visitChildren(ctx)
+
+    @_first_pass_only
+    def visitInvalidToken(self, ctx: PythonParser.InvalidTokenContext):
+        for node in ctx.children:
+            if isinstance(node, TerminalNode):
+                self.context.set_node_info(node, kind=TokenKind.ERROR)
+
     # singleTarget ':' expression ('=' assignmentRhs)?
     @_visitor_guard
     def visitAnnotatedAssignment(self, ctx: PythonParser.AnnotatedAssignmentContext):
