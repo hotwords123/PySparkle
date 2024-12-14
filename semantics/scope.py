@@ -1,8 +1,6 @@
 from enum import Enum
 from typing import Iterator, Optional
 
-from antlr4.Token import CommonToken
-
 from .base import SemanticError
 from .symbol import Symbol
 
@@ -59,7 +57,7 @@ class SymbolTable:
         name: str,
         parents: bool = True,
         globals: bool = True,
-        raise_from: Optional[CommonToken] = None,
+        raise_error: bool = False,
     ) -> Optional[Symbol]:
         """
         Looks up a symbol in the current scope and possibly its parents. Returns None if the
@@ -69,7 +67,7 @@ class SymbolTable:
             name: The name of the symbol to look up.
             parents: Whether to look up the symbol in the parent scopes.
             globals: Whether to look up the symbol in the global scope.
-            raise_from: The token to raise an error from if the symbol is not found.
+            raise_error: Whether to raise an error if the symbol is not found.
 
         Returns:
             symbol: The symbol if found, or None if not found.
@@ -83,8 +81,8 @@ class SymbolTable:
             if not parents:
                 break
             scope = scope.parent
-        if raise_from is not None:
-            raise PySymbolNotFoundError(name, raise_from, self)
+        if raise_error:
+            raise PySymbolNotFoundError(name, self)
         return None
 
     def iter_symbols(
@@ -120,15 +118,14 @@ class SymbolTable:
 
 
 class PyNameError(SemanticError):
-    def __init__(self, token: CommonToken, scope: SymbolTable, message: str):
-        super().__init__(message, token)
+    def __init__(self, scope: SymbolTable, message: str):
+        super().__init__(message)
         self.scope = scope
 
 
 class PyDuplicateSymbolError(PyNameError):
     def __init__(self, symbol: Symbol, scope: SymbolTable):
         super().__init__(
-            symbol.token,
             scope,
             f"Symbol {symbol.name} already defined in scope {scope.name}",
         )
@@ -136,5 +133,6 @@ class PyDuplicateSymbolError(PyNameError):
 
 
 class PySymbolNotFoundError(PyNameError):
-    def __init__(self, name: str, token: CommonToken, scope: SymbolTable):
-        super().__init__(token, scope, f"Symbol {name} not found in scope {scope.name}")
+    def __init__(self, name: str, scope: SymbolTable):
+        super().__init__(scope, f"Symbol {name} not found in scope {scope.name}")
+        self.name = name

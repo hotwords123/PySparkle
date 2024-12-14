@@ -1,6 +1,5 @@
 import dataclasses
-from contextlib import contextmanager
-from typing import Iterator, NamedTuple, Optional, Unpack
+from typing import NamedTuple, Optional, Unpack
 
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.Token import CommonToken
@@ -8,18 +7,11 @@ from antlr4.tree.Tree import TerminalNode
 
 from grammar import PythonParser
 
-from .entity import PyClass, PyEntity, PyFunction, PyModule, PyVariable
-from .scope import PySymbolNotFoundError, ScopeType, SymbolTable
+from .entity import PyEntity, PyFunction, PyModule
+from .scope import SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TOKEN_KIND_MAP, TokenInfo, TokenKind, TokenModifier
-from .types import (
-    PyClassType,
-    PyFunctionType,
-    PyInstanceType,
-    PySelfType,
-    PyType,
-    TypedSymbol,
-)
+from .types import PyType
 
 
 class PythonContext:
@@ -29,15 +21,7 @@ class PythonContext:
 
     def __init__(self, global_scope: SymbolTable):
         self.global_scope: SymbolTable = global_scope
-        self.current_scope: SymbolTable = global_scope
         self.scopes: dict[ParserRuleContext, SymbolTable] = {}
-
-        # Used when analyzing method definitions.
-        self.parent_class: Optional[PyClass] = None
-        # Used when analyzing parameter specifications.
-        self.parent_function: Optional[PyFunction] = None
-        # Used when analyzing function calls.
-        self.called_function: Optional[PyFunctionType] = None
 
         self.imports: list[PyImport] = []
 
@@ -47,40 +31,16 @@ class PythonContext:
 
         self.errors: list[Exception] = []
 
-    @contextmanager
-    def scope_guard(self, scope: SymbolTable) -> Iterator[SymbolTable]:
-        old_scope = self.current_scope
-        self.current_scope = scope
-        try:
-            yield scope
-        finally:
-            self.current_scope = old_scope
+    def set_node_scope(self, node: ParserRuleContext, scope: SymbolTable):
+        self.scopes[node] = scope
 
-    def new_scope(
-        self,
-        ctx: ParserRuleContext,
-        name: str,
-        scope_type: ScopeType,
-        full_name: Optional[str] = None,
-    ) -> SymbolTable:
-        parent_scope = self.current_scope
-        if full_name is None:
-            full_name = f"{parent_scope.full_name}.{name}"
-        if parent_scope.scope_type is ScopeType.CLASS:
-            parent_scope = parent_scope.parent
+    def get_node_scope(self, node: ParserRuleContext) -> SymbolTable:
+        while node is not None:
+            if scope := self.scopes.get(node):
+                return scope
+            node = node.parentCtx
 
-        scope = SymbolTable(name, scope_type, parent_scope, full_name=full_name)
-        self.scopes[ctx] = scope
-        return scope
-
-    def scope_of(self, ctx: ParserRuleContext) -> SymbolTable:
-        assert (scope := self.scopes[ctx]) is not None
-        return scope
-
-    @property
-    def parent_scope(self) -> SymbolTable:
-        assert (scope := self.current_scope.parent) is not None
-        return scope
+        return self.global_scope
 
     def set_node_info(self, node: TerminalNode, /, **kwargs: Unpack[TokenInfo]):
         token = node.getSymbol()
@@ -92,226 +52,6 @@ class PythonContext:
         if modifiers is not None:
             token_info.setdefault("modifiers", TokenModifier(0))
             token_info["modifiers"] |= modifiers
-
-    def define_variable(
-        self,
-        name: str,
-        node: TerminalNode,
-        *,
-        type: Optional[PyType] = None,
-        scope: Optional[SymbolTable] = None,
-    ) -> Symbol:
-        """
-        Defines a variable in the current scope.
-
-        Args:
-            name: The name of the variable.
-            node: The terminal node where the variable is defined.
-            type: The type of the variable (optional).
-            scope: The scope to define the variable in (defaults to the current scope).
-
-        Returns:
-            symbol: The symbol representing the variable.
-        """
-        if scope is None:
-            scope = self.current_scope
-
-        if name not in scope:
-            entity = PyVariable(name, type=type)
-            symbol = Symbol(SymbolType.VARIABLE, name, node, entity=entity)
-            scope.define(symbol)
-        else:
-            symbol = scope[name]
-
-        self.set_node_info(node, symbol=symbol)
-        return symbol
-
-    def access_variable(self, name: str, node: TerminalNode) -> PyType:
-        """
-        Accesses a variable in the current scope.
-
-        Args:
-            name: The name of the variable.
-            node: The terminal node where the variable is accessed.
-
-        Returns:
-            type: The type of the variable.
-        """
-        try:
-            symbol = self.current_scope.lookup(name, raise_from=node.getSymbol())
-            self.set_node_info(node, symbol=symbol)
-            return symbol.get_type()
-
-        except PySymbolNotFoundError as e:
-            self.errors.append(e)
-            return PyType.ANY
-
-    def set_variable_type(
-        self, symbol: Symbol, type: PyType, override: bool = False
-    ) -> PyType:
-        """
-        Sets the type of the variable represented by a symbol.
-
-        Args:
-            symbol: The symbol representing the variable.
-            type: The type of the variable.
-            override: Whether to override the existing type.
-
-        Returns:
-            type: The type of the variable.
-        """
-        if isinstance(entity := symbol.resolve_entity(), PyVariable):
-            if override or entity.type is None:
-                entity.type = type
-            else:
-                type = entity.type
-
-        return type
-
-    def define_attribute(
-        self,
-        on_type: PyType,
-        name: str,
-        node: TerminalNode,
-        *,
-        value_type: Optional[PyType] = None,
-        override_type: bool = False,
-    ):
-        """
-        Defines an attribute on a type.
-
-        Args:
-            on_type: The type to define the attribute on.
-            name: The name of the attribute.
-            node: The terminal node where the attribute is defined.
-            value_type: The type of the attribute value (optional).
-            override_type: Whether to override the existing attribute type.
-        """
-        if attr := on_type.get_attr(name):
-            # If the attribute exists, the target is an attribute.
-            symbol, type_ = attr
-            if value_type is not None:
-                type_ = self.set_variable_type(
-                    symbol, value_type, override=override_type
-                )
-            self.set_node_info(node, symbol=symbol, type=type_)
-
-        elif isinstance(on_type, PySelfType):
-            # If the attribute does not exist, but the target is `self`, the attribute
-            # is defined on the instance scope of the class.
-            self.define_variable(
-                name, node, type=value_type, scope=on_type.cls.instance_scope
-            )
-
-        else:
-            # The attribute cannot be defined on the type.
-            self.set_node_info(node, kind=TokenKind.FIELD)
-
-    def access_attribute(
-        self, on_type: PyType, name: str, node: TerminalNode
-    ) -> PyType:
-        """
-        Accesses an attribute on a type.
-
-        Args:
-            on_type: The type to access the attribute on.
-            name: The name of the attribute.
-            node: The terminal node where the attribute is accessed.
-
-        Returns:
-            type: The type of the attribute.
-        """
-        if attr := on_type.get_attr(name):
-            symbol, type_ = attr
-            self.set_node_info(node, symbol=symbol, type=type_)
-            return type_
-
-        else:
-            self.set_node_info(node, kind=TokenKind.FIELD)
-            return PyType.ANY
-
-    @contextmanager
-    def set_parent_class(self, cls: PyClass) -> Iterator[None]:
-        old_class = self.parent_class
-        self.parent_class = cls
-        try:
-            yield
-        finally:
-            self.parent_class = old_class
-
-    @contextmanager
-    def set_parent_function(self, func: PyFunction) -> Iterator[None]:
-        old_function = self.parent_function
-        self.parent_function = func
-        try:
-            yield
-        finally:
-            self.parent_function = old_function
-
-    @contextmanager
-    def set_called_function(self, type: PyType) -> Iterator[None]:
-        # TODO: This logic should be implemented in the `types` module.
-        if isinstance(type, PyFunctionType):
-            func_type = type
-        elif isinstance(type, PyClassType):
-            func_type = type.lookup_method("__init__")
-        else:
-            func_type = None
-
-        old_function = self.called_function
-        self.called_function = func_type
-        try:
-            yield
-        finally:
-            self.called_function = old_function
-
-    def access_func_kwarg(self, name: str, node: TerminalNode) -> PyType:
-        """
-        Accesses a keyword parameter in the called function.
-
-        Args:
-            name: The name of the keyword parameter.
-            node: The terminal node where the keyword parameter is accessed.
-
-        Returns:
-            type: The type of the keyword parameter.
-        """
-        if self.called_function is not None:
-            func = self.called_function.func
-            kwargs_symbol: Optional[TypedSymbol] = None
-
-            for param in func.parameters:
-                if not param.posonly and param.star is None and param.name == name:
-                    # There is a keyword parameter by the name.
-                    symbol, type_ = self.called_function.get_parameter(param.name)
-                    self.set_node_info(node, symbol=symbol, type=type_)
-                    return type_
-
-                elif param.star == "**":
-                    # There is a double-star parameter. Remember it in case the keyword
-                    # parameter is not found.
-                    kwargs_symbol = self.called_function.get_parameter(param.name)
-
-            if kwargs_symbol is not None:
-                # The argument is passed to the double-star parameter.
-                symbol, type_ = kwargs_symbol
-
-                if (
-                    isinstance(type_, PyInstanceType)
-                    and type_.cls.full_name == "builtins.dict"
-                    and type_.type_args
-                    and len(type_.type_args) == 2
-                ):
-                    arg_type = type_.type_args[1]
-                else:
-                    arg_type = PyType.ANY
-
-                self.set_node_info(node, symbol=symbol, type=arg_type)
-                return arg_type
-
-        # The keyword parameter is not found.
-        self.set_node_info(node, kind=TokenKind.VARIABLE)
-        return PyType.ANY
 
     def get_token_kind(self, token: CommonToken) -> TokenKind:
         if token_info := self.token_info.get(token):
@@ -421,7 +161,7 @@ class PyImportFromTargets(NamedTuple):
         as_names: The list of names imported from the module, or `None` for all.
     """
 
-    as_names: Optional[list["PyImportFromAsName"]] = None
+    as_names: Optional[list["PyImportFromAsName"]]
 
 
 class PyImportFromAsName(NamedTuple):
