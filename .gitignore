@@ -168,3 +168,12 @@ cython_debug/
 grammar/PythonLexer.py
 grammar/PythonParser.py
 grammar/PythonParserVisitor.py
+
+# Output files
+*.html
+
+# VS Code
+.vscode/
+
+# Type stubs
+/typings/
