@@ -6,6 +6,7 @@ from antlr4.Token import CommonToken
 from antlr4.tree.Tree import ParseTree
 from lsprotocol import types as lsp
 
+from grammar import PythonParser
 from semantics.base import get_token_end_position as _get_token_end_position
 
 
@@ -23,10 +24,18 @@ def token_end_position(token: CommonToken) -> lsp.Position:
     return lsp.Position(line - 1, column)
 
 
+def token_contains_position(token: CommonToken, position: lsp.Position) -> bool:
+    start = token_start_position(token)
+    end = token_end_position(token)
+    return start <= position <= end
+
+
 def token_at_position(
     tokens: list[CommonToken],
     position: lsp.Position,
     anchor: Literal["start", "end"] = "start",
+    strict: bool = False,
+    skip_ws: bool = False,
 ) -> Optional[CommonToken]:
     """
     Find the token at the given position, using binary search.
@@ -37,6 +46,8 @@ def token_at_position(
         tokens: A list of tokens to search through.
         position: The position to look for.
         anchor: Whether to consider the start or end position of the token.
+        strict: Whether to require the token to contain the position.
+        skip_ws: Whether to skip whitespace tokens.
 
     Returns:
         The token at the given position, or None if no token is found.
@@ -54,10 +65,18 @@ def token_at_position(
     except IndexError:
         return None
 
-    if token_start_position(token) <= position <= token_end_position(token):
-        return token
+    if skip_ws:
+        while token.type == PythonParser.WS:
+            index += 1 if anchor == "start" else -1
+            try:
+                token = tokens[index]
+            except IndexError:
+                return None
 
-    return None
+    elif strict and not token_contains_position(token, position):
+        return None
+
+    return token
 
 
 def node_at_token_index(tree: ParseTree, token_index: int) -> ParseTree:

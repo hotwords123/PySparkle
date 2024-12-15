@@ -76,6 +76,17 @@ PYTHON_KEYWORDS = [
     "yield",
 ]
 
+NON_COMPLETION_TOKENS = {
+    PythonParser.COMMENT,
+    PythonParser.EXPLICIT_LINE_JOINING,
+    PythonParser.STRING_LITERAL,
+    PythonParser.BYTES_LITERAL,
+    PythonParser.INTEGER,
+    PythonParser.FLOAT_NUMBER,
+    PythonParser.IMAG_NUMBER,
+}
+"""Tokens that should not trigger completions."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +176,7 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         module = self.documents[uri]
-        token = token_at_position(module.source.stream.tokens, position)
+        token = token_at_position(module.source.stream.tokens, position, strict=True)
         if token is None:
             return None
 
@@ -206,7 +217,7 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         module = self.documents[uri]
-        token = token_at_position(module.source.stream.tokens, position)
+        token = token_at_position(module.source.stream.tokens, position, strict=True)
         if token is None:
             return None
 
@@ -236,34 +247,34 @@ class PythonLanguageServer(LanguageServer):
         self, uri: str, position: lsp.Position
     ) -> Iterator[lsp.CompletionItem]:
         if uri not in self.documents:
-            yield from self.get_keyword_completions()
             return
 
         module = self.documents[uri]
 
-        token = token_at_position(module.source.stream.tokens, position, anchor="end")
-        if token is None:
-            yield from self.get_keyword_completions()
+        token = token_at_position(
+            module.source.stream.tokens, position, anchor="end", skip_ws=True
+        )
+        if token is None or token.type in NON_COMPLETION_TOKENS:
             return
 
         node = node_at_token_index(module.source.tree, token.tokenIndex)
-        parent = node.parentCtx
+        parent_node = node.parentCtx
 
         if (
             isinstance(
-                parent,
+                parent_node,
                 PythonParser.PrimaryContext
                 | PythonParser.TargetWithStarAtomContext
                 | PythonParser.SingleSubscriptAttributeTargetContext
                 | PythonParser.DelTargetContext,
             )
-            and (node is parent.DOT() or node is parent.NAME())
+            and (node is parent_node.DOT() or node is parent_node.NAME())
         ) or (
-            isinstance(parent, PythonParser.InvalidPrimaryContext)
-            and node is parent.DOT()
+            isinstance(parent_node, PythonParser.InvalidPrimaryContext)
+            and node is parent_node.DOT()
         ):
             # Attribute access.
-            base_type = module.context.get_node_type(parent.primary())
+            base_type = module.context.get_node_type(parent_node.primary())
             for symbol, _ in base_type.iter_attrs():
                 yield self.get_symbol_completion(symbol)
             return
