@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Final
+from typing import Final, Optional
 
 from antlr4 import ParserRuleContext
 
@@ -45,7 +45,9 @@ class PythonAnalyzer:
         self.importer = ModuleManager(search_paths, self._load_module)
         self.report_errors = report_errors
         self.typeshed_loaded = False
-        self.pending_second_pass: list[PyModule] = []
+
+        self._pending_second_pass: list[PyModule] = []
+        self._module_cls: Optional[PyClass] = None
 
     def load_module(self, module: PyModule, reload: bool = False):
         """
@@ -85,7 +87,7 @@ class PythonAnalyzer:
                     visitor.second_pass(module.source.tree)
                 self._report_module_errors(module)
             else:
-                self.pending_second_pass.append(module)
+                self._pending_second_pass.append(module)
 
     def _report_module_errors(self, module: PyModule):
         """
@@ -105,11 +107,7 @@ class PythonAnalyzer:
         """
         scope = SymbolTable(module.name, ScopeType.GLOBAL, self.builtin_scope)
 
-        # Define the built-in symbols on module objects.
-        # https://docs.python.org/3/library/stdtypes.html#module-objects
-
-        scope.define(Symbol(SymbolType.VARIABLE, "__doc__"))
-        scope.define(Symbol(SymbolType.VARIABLE, "__annotations__"))
+        self._define_module_attrs(scope)
 
         if module.name in special_form_names:
             # Define special forms as classes in the global scope.
@@ -289,22 +287,34 @@ class PythonAnalyzer:
             self.type_stubs[module_name] = module.context.global_scope
 
         with self.set_type_context():
-            module_cls = get_stub_class("types.ModuleType")
-            assert module_cls is not None, "types.ModuleType not found"
-            for symbol in module_cls.scope.iter_symbols():
-                self.builtin_scope.define(
-                    symbol.copy(node=None, public=None, target=symbol)
-                )
+            self._module_cls = get_stub_class("types.ModuleType")
+            assert self._module_cls is not None, "types.ModuleType not found"
+
+        for module in self.importer.modules.values():
+            self._define_module_attrs(module.context.global_scope)
 
         self.typeshed_loaded = True
 
         with self.set_type_context():
-            for module in self.pending_second_pass:
+            for module in self._pending_second_pass:
                 visitor = PythonVisitor(module.context)
                 visitor.second_pass(module.source.tree)
                 self._report_module_errors(module)
 
-        self.pending_second_pass.clear()
+        self._pending_second_pass.clear()
+
+    def _define_module_attrs(self, scope: SymbolTable):
+        """
+        Defines the attributes of a module object in the global scope.
+        """
+        if self._module_cls is None:
+            return
+
+        # Define the built-in symbols on module objects.
+        # https://docs.python.org/3/reference/datamodel.html#module-objects
+        for symbol in self._module_cls.scope.iter_symbols():
+            if symbol.name not in ("__init__", "__getattr__"):
+                scope.define(symbol.copy(node=None, public=None, target=symbol))
 
     def set_type_context(self):
         """
