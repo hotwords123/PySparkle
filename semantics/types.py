@@ -392,6 +392,12 @@ class PyType(ABC):
         )
         return result_type
 
+    def get_callable_type(self) -> Optional["PyFunctionType"]:
+        """
+        Returns the type of the callable, if the type is callable.
+        """
+        return None
+
 
 @final
 class _PyAnyType(PyType):
@@ -517,6 +523,9 @@ class PyInstanceBase(PyType, ABC):
 
         # TODO: Check structural subtyping.
         return None
+
+    def get_callable_type(self) -> Optional["PyFunctionType"]:
+        return self.lookup_method("__call__")
 
 
 class PyTypeVarDef(PyInstanceBase):
@@ -652,6 +661,9 @@ class PyClassType(PyInstanceBase):
             return cls(entity)
         return PyType.ANY
 
+    def get_callable_type(self) -> Optional["PyFunctionType"]:
+        return self.lookup_method("__init__")
+
 
 @final
 class PyGenericAlias(PyInstanceBase):
@@ -737,6 +749,9 @@ class PyGenericAlias(PyInstanceBase):
         if entity := get_stub_class(name):
             return cls(entity, args)
         return PyType.ANY
+
+    def get_callable_type(self) -> Optional["PyFunctionType"]:
+        return self.get_instance_type().lookup_method("__init__")
 
 
 class PyInstanceType(PyInstanceBase):
@@ -871,6 +886,9 @@ class PyFunctionType(PyInstanceBase):
         if func := get_stub_func(name):
             return PyFunctionType(func)
         return PyType.ANY
+
+    def get_callable_type(self) -> "PyFunctionType":
+        return self
 
 
 @final
@@ -1178,6 +1196,14 @@ class PyUnionType(PyType):
         for item in self.items:
             if (type_args := item.check_protocol(protocol)) is not None:
                 return type_args
+
+        return None
+
+    def get_callable_type(self) -> Optional["PyFunctionType"]:
+        # TODO: Currently, only the first matching type is returned.
+        for item in self.items:
+            if callable_type := item.get_callable_type():
+                return callable_type
 
         return None
 

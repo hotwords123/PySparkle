@@ -306,13 +306,7 @@ class PythonVisitor(PythonParserVisitor):
 
     @contextmanager
     def _set_called_function(self, type: PyType) -> Iterator[None]:
-        # TODO: This logic should be implemented in the `types` module.
-        if isinstance(type, PyFunctionType):
-            func_type = type
-        elif isinstance(type, PyClassType):
-            func_type = type.lookup_method("__init__")
-        else:
-            func_type = None
+        func_type = type.get_callable_type()
 
         old_function = self._called_function
         self._called_function = func_type
