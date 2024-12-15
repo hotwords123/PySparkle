@@ -236,7 +236,7 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         module = self.documents[uri]
-        token = token_at_position(module.source.stream.tokens, position)
+        token = token_at_position(module.source.stream.tokens, position, anchor="end")
         if token is None:
             return None
 
@@ -316,7 +316,7 @@ def semantic_tokens_full(
 
 @server.feature(lsp.TEXT_DOCUMENT_HOVER)
 def hover(ls: PythonLanguageServer, params: lsp.HoverParams) -> Optional[lsp.Hover]:
-    logger.info(f"Requested hover: {params.text_document.uri}")
+    logger.info(f"Requested hover: {params.text_document.uri} at {params.position}")
     return ls.get_hover(params.text_document.uri, params.position)
 
 
@@ -324,7 +324,9 @@ def hover(ls: PythonLanguageServer, params: lsp.HoverParams) -> Optional[lsp.Hov
 def goto_definition(
     ls: PythonLanguageServer, params: lsp.DefinitionParams
 ) -> Optional[lsp.Location]:
-    logger.info(f"Requested definition: {params.text_document.uri}")
+    logger.info(
+        f"Requested definition: {params.text_document.uri} at {params.position}"
+    )
     return ls.get_definition(params.text_document.uri, params.position)
 
 
@@ -335,5 +337,7 @@ def goto_definition(
 def completions(
     ls: PythonLanguageServer, params: lsp.CompletionParams
 ) -> Optional[lsp.CompletionList]:
-    logger.info(f"Requested completions: {params.text_document.uri}")
+    logger.info(
+        f"Requested completions: {params.text_document.uri} at {params.position}"
+    )
     return ls.get_completions(params.text_document.uri, params.position)

@@ -1,5 +1,5 @@
 import bisect
-from typing import Optional
+from typing import Literal, Optional
 
 from antlr4 import ParserRuleContext
 from antlr4.Token import CommonToken
@@ -24,7 +24,9 @@ def token_end_position(token: CommonToken) -> lsp.Position:
 
 
 def token_at_position(
-    tokens: list[CommonToken], position: lsp.Position
+    tokens: list[CommonToken],
+    position: lsp.Position,
+    anchor: Literal["start", "end"] = "start",
 ) -> Optional[CommonToken]:
     """
     Find the token at the given position, using binary search.
@@ -34,18 +36,25 @@ def token_at_position(
     Args:
         tokens: A list of tokens to search through.
         position: The position to look for.
+        anchor: Whether to consider the start or end position of the token.
 
     Returns:
         The token at the given position, or None if no token is found.
     """
-    index = bisect.bisect_right(tokens, position, key=token_start_position) - 1
+    match anchor:
+        case "start":
+            index = bisect.bisect_right(tokens, position, key=token_start_position) - 1
+        case "end":
+            index = bisect.bisect_left(tokens, position, key=token_end_position)
+        case _:
+            raise ValueError(f"Invalid anchor: {anchor!r}")
 
     try:
         token = tokens[index]
     except IndexError:
         return None
 
-    if token_start_position(token) <= position < token_end_position(token):
+    if token_start_position(token) <= position <= token_end_position(token):
         return token
 
     return None
