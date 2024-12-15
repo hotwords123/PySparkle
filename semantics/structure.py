@@ -28,6 +28,7 @@ class PythonContext:
         self.entities: dict[ParserRuleContext, PyEntity] = {}
 
         self.token_info: dict[CommonToken, TokenInfo] = {}
+        self.node_types: dict[ParserRuleContext, PyType] = {}
 
         self.errors: list[Exception] = []
 
@@ -52,6 +53,12 @@ class PythonContext:
         if modifiers is not None:
             token_info.setdefault("modifiers", TokenModifier(0))
             token_info["modifiers"] |= modifiers
+
+    def set_node_type(self, node: ParserRuleContext, type_: PyType):
+        self.node_types[node] = type_
+
+    def get_node_type(self, node: ParserRuleContext) -> PyType:
+        return self.node_types.get(node, PyType.ANY)
 
     def get_token_kind(self, token: CommonToken) -> TokenKind:
         if token_info := self.token_info.get(token):

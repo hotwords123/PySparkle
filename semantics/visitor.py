@@ -80,12 +80,13 @@ def _visitor_guard(
             if action == "visit" and ctx.exception is not None:
                 action = error_action
 
+            result = None
             try:
                 match action:
                     case "visit":
-                        return func(visitor, ctx, **kwargs)
+                        result = func(visitor, ctx, **kwargs)
                     case "default":
-                        return visitor.visitChildren(ctx)
+                        result = visitor.visitChildren(ctx)
                     case "skip":
                         pass
 
@@ -96,6 +97,11 @@ def _visitor_guard(
                 visitor._current_ctx = old_ctx
                 if old_scope is not None:
                     visitor._current_scope = old_scope
+
+            if isinstance(result, PyType):
+                visitor.context.set_node_type(ctx, result)
+
+            return result
 
         return wrapper
 

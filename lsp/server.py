@@ -1,7 +1,7 @@
 import functools
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from antlr4 import FileStream
 from antlr4.Token import CommonToken
@@ -13,14 +13,9 @@ from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
-from lsp.utils import (
-    node_at_token_index,
-    snake_case_to_camel_case,
-    token_at_position,
-    token_end_position,
-    token_start_position,
-)
+from grammar import PythonParser
 from semantics.entity import PyClass, PyFunction, PyModule
+from semantics.symbol import Symbol
 from semantics.token import TokenKind, TokenModifier, is_blank_token
 from semantics.types import (
     PyClassType,
@@ -28,6 +23,14 @@ from semantics.types import (
     PyGenericAlias,
     PyModuleType,
     PyTypeVarDef,
+)
+
+from .utils import (
+    node_at_token_index,
+    snake_case_to_camel_case,
+    token_at_position,
+    token_end_position,
+    token_start_position,
 )
 
 TOKEN_KINDS = [kind.value for kind in TokenKind]
@@ -231,50 +234,74 @@ class PythonLanguageServer(LanguageServer):
 
     def get_completions(
         self, uri: str, position: lsp.Position
-    ) -> Optional[lsp.CompletionList]:
+    ) -> Iterator[lsp.CompletionItem]:
         if uri not in self.documents:
-            return None
+            yield from self.get_keyword_completions()
+            return
 
         module = self.documents[uri]
+
         token = token_at_position(module.source.stream.tokens, position, anchor="end")
         if token is None:
-            return None
+            yield from self.get_keyword_completions()
+            return
 
         node = node_at_token_index(module.source.tree, token.tokenIndex)
+        parent = node.parentCtx
+
+        if (
+            isinstance(
+                parent,
+                PythonParser.PrimaryContext
+                | PythonParser.TargetWithStarAtomContext
+                | PythonParser.SingleSubscriptAttributeTargetContext
+                | PythonParser.DelTargetContext,
+            )
+            and (node is parent.DOT() or node is parent.NAME())
+        ) or (
+            isinstance(parent, PythonParser.InvalidPrimaryContext)
+            and node is parent.DOT()
+        ):
+            # Attribute access.
+            base_type = module.context.get_node_type(parent.primary())
+            for symbol, _ in base_type.iter_attrs():
+                yield self.get_symbol_completion(symbol)
+            return
+
+        yield from self.get_keyword_completions()
+
+        # Yield symbols available in the current scope.
         scope = module.context.get_node_scope(node)
-
-        items: list[lsp.CompletionItem] = []
-
-        for keyword in PYTHON_KEYWORDS:
-            items.append(
-                lsp.CompletionItem(
-                    label=keyword,
-                    kind=lsp.CompletionItemKind.Keyword,
-                )
-            )
-
         for symbol in scope.iter_symbols(parents=True):
-            kind = lsp.CompletionItemKind.Variable
-            if entity := symbol.resolve_entity():
-                if isinstance(entity, PyModule):
-                    kind = lsp.CompletionItemKind.Module
-                elif isinstance(entity, PyClass):
-                    kind = lsp.CompletionItemKind.Class
-                elif isinstance(entity, PyFunction):
-                    if entity.is_method:
-                        kind = lsp.CompletionItemKind.Method
-                    else:
-                        kind = lsp.CompletionItemKind.Function
+            yield self.get_symbol_completion(symbol)
 
-            items.append(
-                lsp.CompletionItem(
-                    label=symbol.name,
-                    kind=kind,
-                    detail=symbol.full_name,
-                )
+    @staticmethod
+    def get_keyword_completions() -> Iterator[lsp.CompletionItem]:
+        for keyword in PYTHON_KEYWORDS:
+            yield lsp.CompletionItem(
+                label=keyword,
+                kind=lsp.CompletionItemKind.Keyword,
             )
 
-        return lsp.CompletionList(is_incomplete=False, items=items)
+    @staticmethod
+    def get_symbol_completion(symbol: Symbol) -> lsp.CompletionItem:
+        kind = lsp.CompletionItemKind.Variable
+        if entity := symbol.resolve_entity():
+            if isinstance(entity, PyModule):
+                kind = lsp.CompletionItemKind.Module
+            elif isinstance(entity, PyClass):
+                kind = lsp.CompletionItemKind.Class
+            elif isinstance(entity, PyFunction):
+                if entity.is_method:
+                    kind = lsp.CompletionItemKind.Method
+                else:
+                    kind = lsp.CompletionItemKind.Function
+
+        return lsp.CompletionItem(
+            label=symbol.name,
+            kind=kind,
+            detail=symbol.full_name,
+        )
 
 
 server = PythonLanguageServer()
@@ -336,8 +363,9 @@ def goto_definition(
 )
 def completions(
     ls: PythonLanguageServer, params: lsp.CompletionParams
-) -> Optional[lsp.CompletionList]:
+) -> lsp.CompletionList:
     logger.info(
         f"Requested completions: {params.text_document.uri} at {params.position}"
     )
-    return ls.get_completions(params.text_document.uri, params.position)
+    items = ls.get_completions(params.text_document.uri, params.position)
+    return lsp.CompletionList(is_incomplete=False, items=list(items))
