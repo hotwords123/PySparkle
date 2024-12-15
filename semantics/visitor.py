@@ -36,6 +36,7 @@ from .types import (
     PyTypeError,
     PyUnionType,
     PyUnpack,
+    PyUnpackKv,
     TypedSymbol,
     infer_dict_display,
     infer_list_display,
@@ -1832,7 +1833,7 @@ class PythonVisitor(PythonParserVisitor):
         self, ctx: PythonParser.DoubleStarredKvpairContext
     ) -> PyDictDisplayItem:
         if ctx.DOUBLESTAR():
-            return PyUnpack(self.visitBitwise(ctx.bitwise()), kvpair=True)
+            return PyUnpackKv(self.visitBitwise(ctx.bitwise()))
         else:
             return self.visitKvpair(ctx.kvpair())
 

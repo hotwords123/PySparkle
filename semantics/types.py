@@ -1102,9 +1102,8 @@ class PyUnpack(PyType):
     Wrapper type for unpacked types in star expressions.
     """
 
-    def __init__(self, inner: PyType, kvpair: bool = False):
+    def __init__(self, inner: PyType):
         self.inner = inner
-        self.kvpair = kvpair
 
     def __str__(self) -> str:
         return f"*{self.inner}"
@@ -1136,12 +1135,29 @@ class PyUnpack(PyType):
         # Check if the inner type is an iterable.
         return self.inner.get_iterated_type()
 
+
+@final
+class PyUnpackKv(PyType):
+    """
+    Wrapper type for unpacked key-value pairs in star expressions.
+    """
+
+    def __init__(self, inner: PyType):
+        self.inner = inner
+
+    def __str__(self) -> str:
+        return "**"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} inner={self.inner!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PyUnpackKv) and self.inner == other.inner
+
     def get_unpacked_kvpair(self) -> "PyKvPair":
         """
         Returns the key-value pair of the unpacked item.
         """
-        assert self.kvpair
-
         # The inner type should be a Mapping type.
         return self.inner.get_mapped_types()
 
@@ -1332,7 +1348,7 @@ class PyKvPair(NamedTuple):
     value: PyType
 
 
-PyDictDisplayItem = PyUnpack | PyKvPair
+PyDictDisplayItem = PyUnpackKv | PyKvPair
 
 
 def infer_list_display(item_types: Iterable[PyType]) -> Optional[PyTypeArgs]:
@@ -1372,7 +1388,7 @@ def infer_dict_display(items: Iterable[PyDictDisplayItem]) -> Optional[PyTypeArg
     value_types: list[PyType] = []
 
     for item in items:
-        if isinstance(item, PyUnpack):
+        if isinstance(item, PyUnpackKv):
             # The unpacked item should be a Mapping type.
             key_type, value_type = item.get_unpacked_kvpair()
             key_types.append(key_type)
