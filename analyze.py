@@ -14,7 +14,7 @@ from typeshed_client import get_search_context
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource
 from semantics.entity import PyModule
-from semantics.token import TokenKind, is_blank_token
+from semantics.token import TokenKind, is_synthetic_token
 
 
 def main(args):
@@ -73,7 +73,7 @@ def generate_html(module: PyModule) -> dominate.document:
             with dom.pre():
                 for token in module.source.stream.tokens:
                     token: CommonToken
-                    if is_blank_token(token):
+                    if is_synthetic_token(token):
                         continue
 
                     token_kind = module.context.get_token_kind(token)
