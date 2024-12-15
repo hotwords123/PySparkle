@@ -305,13 +305,13 @@ class PythonVisitor(PythonParserVisitor):
             self._parent_function = old_function
 
     @contextmanager
-    def _set_called_function(self, type: PyType) -> Iterator[None]:
+    def _set_called_function(self, type: PyType) -> Iterator[Optional[PyFunctionType]]:
         func_type = type.get_callable_type()
 
         old_function = self._called_function
         self._called_function = func_type
         try:
-            yield
+            yield func_type
         finally:
             self._called_function = old_function
 
@@ -1448,20 +1448,19 @@ class PythonVisitor(PythonParserVisitor):
 
             return type_.get_subscripted_type(key_type)
 
-        elif genexp := ctx.genexp():
-            # Function call with generator expression
-            with self._set_called_function(type_):
-                arg_type = self.visitGenexp(genexp)
-
-            return type_.get_return_type(PyArguments(args=[arg_type]))
-
         else:
             # Function call
-            if arguments := ctx.arguments():
-                with self._set_called_function(type_):
+            with self._set_called_function(type_) as func:
+                if genexp := ctx.genexp():
+                    arg_type = self.visitGenexp(genexp)
+                    args = PyArguments(args=[arg_type])
+                elif arguments := ctx.arguments():
                     args = self.visitArguments(arguments)
-            else:
-                args = PyArguments()
+                else:
+                    args = PyArguments()
+
+                if func is not None:
+                    self.context.set_function_call(ctx, func, args)
 
             return type_.get_return_type(args)
 

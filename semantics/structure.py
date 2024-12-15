@@ -11,7 +11,9 @@ from .entity import PyEntity, PyFunction, PyModule
 from .scope import SymbolTable
 from .symbol import Symbol, SymbolType
 from .token import TOKEN_KIND_MAP, TokenInfo, TokenKind, TokenModifier
-from .types import PyType
+from .types import PyArguments, PyFunctionType, PyType
+
+PyFunctionCall = tuple[PyFunctionType, PyArguments]
 
 
 class PythonContext:
@@ -29,6 +31,7 @@ class PythonContext:
 
         self.token_info: dict[CommonToken, TokenInfo] = {}
         self.node_types: dict[ParserRuleContext, PyType] = {}
+        self.function_calls: dict[ParserRuleContext, PyFunctionCall] = {}
 
         self.errors: list[Exception] = []
 
@@ -53,12 +56,6 @@ class PythonContext:
         if modifiers is not None:
             token_info.setdefault("modifiers", TokenModifier(0))
             token_info["modifiers"] |= modifiers
-
-    def set_node_type(self, node: ParserRuleContext, type_: PyType):
-        self.node_types[node] = type_
-
-    def get_node_type(self, node: ParserRuleContext) -> PyType:
-        return self.node_types.get(node, PyType.ANY)
 
     def get_token_kind(self, token: CommonToken) -> TokenKind:
         if token_info := self.token_info.get(token):
@@ -114,6 +111,20 @@ class PythonContext:
                 return symbol.get_type()
 
         return None
+
+    def set_node_type(self, node: ParserRuleContext, type_: PyType):
+        self.node_types[node] = type_
+
+    def get_node_type(self, node: ParserRuleContext) -> PyType:
+        return self.node_types.get(node, PyType.ANY)
+
+    def set_function_call(
+        self, node: ParserRuleContext, function: PyFunctionType, arguments: PyArguments
+    ):
+        self.function_calls[node] = (function, arguments)
+
+    def get_function_call(self, node: ParserRuleContext) -> Optional[PyFunctionCall]:
+        return self.function_calls.get(node)
 
 
 @dataclasses.dataclass
