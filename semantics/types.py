@@ -8,6 +8,7 @@ References
 - https://docs.python.org/3/library/types.html
 """
 
+import logging
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -30,6 +31,8 @@ from .symbol import Symbol
 
 if TYPE_CHECKING:
     from .entity import PyClass, PyEntity, PyFunction, PyModule, PyParameters
+
+logger = logging.getLogger(__name__)
 
 
 class PyTypeError(SemanticError):
@@ -114,6 +117,8 @@ def get_stub_class(name: str, dummy: bool = False) -> Optional["PyClass"]:
     if isinstance(entity := get_stub_entity(name), PyClass):
         return entity
 
+    logger.warning(f"Stub class {name} not found")
+
     if dummy:
         if name in _dummy_classes:
             return _dummy_classes[name]
@@ -133,6 +138,7 @@ def get_stub_func(name: str) -> Optional["PyFunction"]:
     if isinstance(entity := get_stub_entity(name), PyFunction):
         return entity
 
+    logger.warning(f"Stub function {name} not found")
     return None
 
 
@@ -474,7 +480,7 @@ class PyInstanceBase(PyType, ABC):
             )
 
     def lookup_method(self, name: str) -> Optional["PyFunctionType"]:
-        for scope in self.attr_scopes():
+        for scope in self.class_attr_scopes():
             if attr := scope.get(name):
                 if isinstance(attr.type, PyFunctionType):
                     return attr.type
@@ -530,6 +536,9 @@ class PyInstanceBase(PyType, ABC):
 
     def get_callable_type(self) -> Optional["PyFunctionType"]:
         return self.lookup_method("__call__")
+
+    def get_constructor_type(self) -> Optional["PyFunctionType"]:
+        return self.lookup_method("__init__") or self.lookup_method("__new__")
 
 
 class PyTypeVarDef(PyInstanceBase):
@@ -636,10 +645,9 @@ class PyClassType(PyInstanceBase):
 
     def get_return_type(self, args: "PyArguments") -> PyType:
         if self.cls.full_name == "typing.TypeVar":
-            init_func = self.cls.lookup_method("__init__")
-            parameters = init_func.parameters.copy()
-            parameters.remove_bound_param()
-            result = match_arguments_to_parameters(args, parameters)
+            result = match_arguments_to_parameters(
+                args, self.get_callable_type().get_parameters()
+            )
 
             name = result.values.get("name")
             if name and isinstance(name, PyLiteralType) and type(name.value) is str:
@@ -673,7 +681,7 @@ class PyClassType(PyInstanceBase):
         return PyType.ANY
 
     def get_callable_type(self) -> Optional["PyFunctionType"]:
-        return self.lookup_method("__init__")
+        return PyInstanceType(self.cls).get_constructor_type()
 
 
 @final
@@ -762,7 +770,7 @@ class PyGenericAlias(PyInstanceBase):
         return PyType.ANY
 
     def get_callable_type(self) -> Optional["PyFunctionType"]:
-        return self.get_instance_type().lookup_method("__init__")
+        return self.get_instance_type().get_constructor_type()
 
 
 class PyInstanceType(PyInstanceBase):
@@ -1349,6 +1357,8 @@ class ArgumentMatch(NamedTuple):
     """The mapping of argument indices to parameter indices."""
     values: dict[str, PyType]
     """The mapping of keyword argument names to their types."""
+    next_positional: int
+    """The index of the next positional parameter to match, or -1 if no more."""
 
 
 def match_arguments_to_parameters(
@@ -1364,18 +1374,20 @@ def match_arguments_to_parameters(
     Returns:
         result: The result of the matching process.
     """
-    result = ArgumentMatch(matched={}, values={})
     pos_params = parameters.get_positionals()
-    pos_index = 0
     star_args: list[PyType] = []
+
+    matched: dict[int, int] = {}
+    values: dict[str, PyType] = {}
+    next_positional = 0 if pos_params else -1
 
     for i, arg in enumerate(arguments):
         if isinstance(arg, PyKeywordArgument):
             # Keyword arguments are matched by name.
             if param := parameters.get_keyword(arg.name):
-                result.matched[i] = parameters.index(param)
+                matched[i] = parameters.index(param)
                 if param.star is None:
-                    result.values[param.name] = arg.type
+                    values[param.name] = arg.type
 
         elif isinstance(arg, PyUnpackKv):
             # Cannot match unpacked key-value pairs.
@@ -1383,34 +1395,35 @@ def match_arguments_to_parameters(
 
         else:
             # Positional arguments are matched by position.
-            if not 0 <= pos_index < len(pos_params):
+            if next_positional == -1:
                 continue
 
             if isinstance(arg, PyUnpack):
                 # Unpack the starred item if possible.
                 unpacked = arg.get_unpacked_types()
                 if unpacked is None:
-                    pos_index = -1
+                    next_positional = -1
                     continue
             else:
                 unpacked = (arg,)
 
-            result.matched[i] = pos_index
+            matched[i] = next_positional
 
             for item in unpacked:
-                param = pos_params[pos_index]
+                param = pos_params[next_positional]
                 if param.star == "*":
                     star_args.append(item)
                 else:
-                    result.values[param.name] = item
-                    pos_index += 1
-                    if pos_index >= len(pos_params):
+                    values[param.name] = item
+                    next_positional += 1
+                    if next_positional >= len(pos_params):
+                        next_positional = -1
                         break
 
     if star_param := parameters.get_starred():
-        result.values[star_param.name] = PyTupleType.from_starred(star_args)
+        values[star_param.name] = PyTupleType.from_starred(star_args)
 
-    return result
+    return ArgumentMatch(matched, values, next_positional)
 
 
 class PyKvPair(NamedTuple):

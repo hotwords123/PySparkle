@@ -61,3 +61,20 @@ def get_token_end_position(token: CommonToken) -> tuple[int, int]:
         return token.line, token.column + len(token.text)
     else:
         return token.line + len(lines) - 1, len(lines[-1])
+
+
+def get_node_source(node: ParseTree) -> str:
+    """
+    Returns the source code of a node in the parse tree.
+
+    Args:
+        node: The node to get the source code of.
+
+    Returns:
+        The source code of the node.
+    """
+    if isinstance(node, ParserRuleContext):
+        start, stop = node.start, node.stop
+        return start.getInputStream().getText(start.start, stop.stop)
+
+    return node.getText()

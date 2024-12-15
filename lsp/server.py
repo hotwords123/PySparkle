@@ -23,9 +23,13 @@ from semantics.types import (
     PyGenericAlias,
     PyModuleType,
     PyTypeVarDef,
+    match_arguments_to_parameters,
 )
 
 from .utils import (
+    find_ancestor_node,
+    get_argument_index,
+    is_inside_arguments,
     node_at_token_index,
     snake_case_to_camel_case,
     token_at_position,
@@ -314,6 +318,72 @@ class PythonLanguageServer(LanguageServer):
             detail=symbol.full_name,
         )
 
+    def get_signature_help(
+        self, uri: str, position: lsp.Position
+    ) -> Optional[lsp.SignatureHelp]:
+        if uri not in self.documents:
+            return None
+
+        module = self.documents[uri]
+        token = token_at_position(
+            module.source.stream.tokens, position, anchor="end", skip_ws=True
+        )
+        if token is None:
+            return None
+
+        node = node_at_token_index(module.source.tree, token.tokenIndex)
+
+        # Find the primary node that contains a valid function call.
+        while node is not None:
+            call_node = find_ancestor_node(node, PythonParser.PrimaryContext)
+            if call_node is None:
+                return None
+
+            func_call = module.context.get_function_call(call_node)
+            if func_call is not None and is_inside_arguments(call_node, token):
+                break
+
+            node = call_node.parentCtx
+
+        else:
+            return None
+
+        func_type, func_args = func_call
+        parameters = func_type.get_parameters()
+
+        if arguments_node := call_node.arguments():
+            # Find the index of the active argument.
+            arg_index = get_argument_index(arguments_node, token)
+
+            # Find the corresponding parameter.
+            result = match_arguments_to_parameters(func_args, parameters)
+            if arg_index < len(func_args):
+                active_param_index = result.matched.get(arg_index, -1)
+            else:
+                active_param_index = result.next_positional
+
+        else:
+            active_param_index = 0 if parameters.get_positional(0) else -1
+
+        # Construct the signature help.
+        param_labels = [param.get_label() for param in parameters]
+        return_type = func_type.get_return_type(func_args)
+        func_label = f"({', '.join(param_labels)}) -> {return_type}"
+
+        return lsp.SignatureHelp(
+            signatures=[
+                lsp.SignatureInformation(
+                    label=func_label,
+                    documentation=None,
+                    parameters=[
+                        lsp.ParameterInformation(label=label) for label in param_labels
+                    ],
+                    active_parameter=active_param_index,
+                )
+            ],
+            active_signature=0,
+        )
+
 
 server = PythonLanguageServer()
 
@@ -349,13 +419,15 @@ def semantic_tokens_full(
     ls: PythonLanguageServer, params: lsp.SemanticTokensParams
 ) -> Optional[lsp.SemanticTokens]:
     logger.info(f"Requested semantic tokens: {params.text_document.uri}")
-    return ls.get_semantic_tokens(params.text_document.uri)
+    with ls.analyzer.set_type_context():
+        return ls.get_semantic_tokens(params.text_document.uri)
 
 
 @server.feature(lsp.TEXT_DOCUMENT_HOVER)
 def hover(ls: PythonLanguageServer, params: lsp.HoverParams) -> Optional[lsp.Hover]:
     logger.info(f"Requested hover: {params.text_document.uri} at {params.position}")
-    return ls.get_hover(params.text_document.uri, params.position)
+    with ls.analyzer.set_type_context():
+        return ls.get_hover(params.text_document.uri, params.position)
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
@@ -378,5 +450,20 @@ def completions(
     logger.info(
         f"Requested completions: {params.text_document.uri} at {params.position}"
     )
-    items = ls.get_completions(params.text_document.uri, params.position)
-    return lsp.CompletionList(is_incomplete=False, items=list(items))
+    with ls.analyzer.set_type_context():
+        items = list(ls.get_completions(params.text_document.uri, params.position))
+    return lsp.CompletionList(is_incomplete=False, items=items)
+
+
+@server.feature(
+    lsp.TEXT_DOCUMENT_SIGNATURE_HELP,
+    lsp.SignatureHelpOptions(trigger_characters=["(", ","]),
+)
+def signature_help(
+    ls: PythonLanguageServer, params: lsp.SignatureHelpParams
+) -> Optional[lsp.SignatureHelp]:
+    logger.info(
+        f"Requested signature help: {params.text_document.uri} at {params.position}"
+    )
+    with ls.analyzer.set_type_context():
+        return ls.get_signature_help(params.text_document.uri, params.position)

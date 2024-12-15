@@ -3,7 +3,7 @@ from typing import Literal, Optional
 
 from antlr4 import ParserRuleContext
 from antlr4.Token import CommonToken
-from antlr4.tree.Tree import ParseTree
+from antlr4.tree.Tree import ParseTree, TerminalNode
 from lsprotocol import types as lsp
 
 from grammar import PythonParser
@@ -100,3 +100,90 @@ def node_at_token_index(tree: ParseTree, token_index: int) -> ParseTree:
             break
 
     return tree
+
+
+def find_ancestor_node[
+    T: ParserRuleContext
+](tree: ParseTree, parent_type: type[T]) -> Optional[T]:
+    """
+    Find the nearest ancestor of the given type.
+
+    Args:
+        tree: The tree to search through.
+        parent_type: The type of the ancestor to look for.
+
+    Returns:
+        The nearest ancestor of the given type, or None if not found.
+    """
+    while tree is not None:
+        if isinstance(tree, parent_type):
+            return tree
+        tree = tree.parentCtx
+
+    return None
+
+
+def is_inside_arguments(
+    call_node: PythonParser.PrimaryContext, token: CommonToken
+) -> bool:
+    """
+    Return whether the given token is inside the arguments of a call expression.
+
+    Args:
+        call_node: The call expression node.
+        token: The token to check.
+
+    Returns:
+        Whether the token is inside the arguments of the call expression.
+    """
+    if genexp := call_node.genexp():
+        # primary: primary genexp
+        # genexp: '(' namedExpression forIfClauses ')';
+        lparen, rparen = genexp.LPAREN(), genexp.RPAREN()
+    else:
+        # primary: primary '(' arguments? ')'
+        lparen, rparen = call_node.LPAREN(), call_node.RPAREN()
+
+    if lparen is None or rparen is None:
+        return False
+
+    return (
+        lparen.getSymbol().tokenIndex
+        <= token.tokenIndex
+        < rparen.getSymbol().tokenIndex
+    )
+
+
+def get_argument_index(
+    arguments_node: PythonParser.ArgumentsContext, token: CommonToken
+) -> int:
+    """
+    Find the index of the active argument in the given arguments node.
+
+    Args:
+        arguments_node: The arguments node to search through.
+        token: The token to find the argument index of.
+
+    Returns:
+        The index of the active argument.
+    """
+    # Collect the comma tokens between arguments.
+    commas: list[TerminalNode] = []
+
+    # arguments: args ','?;
+    if args_node := arguments_node.args():
+        commas.extend(args_node.COMMA())
+        # args: arg (',' arg)* (',' kwargs)? | kwargs;
+        if kwargs_node := args_node.kwargs():
+            # kwargs
+            #   : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
+            #   | kwargOrDoubleStarred (',' kwargOrDoubleStarred)*;
+            commas.extend(kwargs_node.COMMA())
+    if comma := arguments_node.COMMA():
+        commas.append(comma)
+
+    # Collect the token indices of the commas.
+    comma_indices = [comma.getSymbol().tokenIndex for comma in commas]
+
+    # Find the index of the active argument.
+    return bisect.bisect_right(comma_indices, token.tokenIndex)

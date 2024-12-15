@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Literal, Optional
 
+from .base import get_node_source
 from .scope import ScopeType, SymbolTable
 from .types import (
     CollectTypeVars,
@@ -463,6 +464,21 @@ class PyParameter(PyVariable):
 
     def __str__(self):
         return f"<parameter {self.star or ''}{self.name}>"
+
+    def get_label(self) -> str:
+        label = f"{self.star or ''}{self.name}"
+
+        if self.type:
+            label += f": {self.type}"
+        elif self.annotation:
+            label += f": {get_node_source(self.annotation.expression())}"
+        elif self.star_annotation:
+            label += f": {get_node_source(self.star_annotation.starredExpression())}"
+
+        if self.default:
+            label += f" = {get_node_source(self.default.expression())}"
+
+        return label
 
 
 class PyParameters(list[PyParameter]):
