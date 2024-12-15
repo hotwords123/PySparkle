@@ -914,20 +914,18 @@ class PythonVisitor(PythonParserVisitor):
                     entity.parameters.extend(parameters)
 
                 elif self.pass_num == 2:
-                    if (
-                        entity.is_method
-                        and entity.parameters
-                        and (first_param := entity.parameters[0]).type is None
-                        and not first_param.kwonly
-                        and first_param.star is None
+                    if entity.is_method and (
+                        bound_param := entity.parameters.get_bound_param()
                     ):
                         if entity.has_modifier("classmethod"):
                             # Class methods have a `cls` parameter.
-                            first_param.type = entity.cls.get_type()
+                            if bound_param.type is None:
+                                bound_param.type = entity.cls.get_type()
 
                         elif not entity.has_modifier("staticmethod"):
                             # Instance methods have a `self` parameter.
-                            first_param.type = entity.cls.get_self_type()
+                            if bound_param.type is None:
+                                bound_param.type = entity.cls.get_self_type()
 
             self.visitBlock(ctx.block())
 

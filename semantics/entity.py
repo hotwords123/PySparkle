@@ -15,6 +15,7 @@ from .types import (
     PyType,
     PyTypeArgs,
     PyTypeError,
+    PyTypeTransform,
     PyTypeVar,
     PyTypeVarType,
     get_stub_class,
@@ -360,7 +361,7 @@ class PyFunction(_ModifiersMixin, PyEntity):
         super().__init__(name)
         self.scope = scope
         self.cls = cls
-        self.parameters: list[PyParameter] = []
+        self.parameters = PyParameters()
         self.return_type: Optional[PyType] = None
         self.decorators: list[PyType] = []
 
@@ -384,9 +385,12 @@ class PyFunction(_ModifiersMixin, PyEntity):
             return "method"
         return "function"
 
+    @property
+    def detailed_name(self) -> str:
+        return f"{self.cls.name}.{self.name}" if self.cls else self.name
+
     def __str__(self) -> str:
-        name = f"{self.cls.name}.{self.name}" if self.cls else self.name
-        return f"<{self.tag} {name}>"
+        return f"<{self.tag} {self.detailed_name!r}>"
 
     def get_type(self) -> PyFunctionType:
         return PyFunctionType(self)
@@ -455,3 +459,50 @@ class PyParameter(PyVariable):
 
     def __str__(self):
         return f"<parameter {self.star or ''}{self.name}>"
+
+
+class PyParameters(list[PyParameter]):
+    """
+    A list of function parameters.
+    """
+
+    def __str__(self):
+        return ", ".join(str(param) for param in self)
+
+    def has_bound_param(self) -> bool:
+        """
+        Returns whether the parameters have a bound parameter.
+
+        The bound parameter is the first parameter, and it should not be keyword-only
+        or starred. This parameter is usually named `self` in methods, and `cls` in
+        classmethods.
+        """
+        return bool(self) and not self[0].kwonly and not self[0].star
+
+    def get_bound_param(self) -> Optional[PyParameter]:
+        """
+        Returns the bound parameter of the parameters.
+        """
+        return self[0] if self.has_bound_param() else None
+
+    def remove_bound_param(self):
+        """
+        Removes the bound parameter from the parameters.
+        """
+        if self.has_bound_param():
+            self.pop(0)
+
+    def transform(self, transform: PyTypeTransform) -> "PyParameters":
+        return PyParameters(
+            PyParameter(
+                param.name,
+                transform.visit_type(param.type),
+                kwonly=param.kwonly,
+                posonly=param.posonly,
+                star=param.star,
+                annotation=param.annotation,
+                star_annotation=param.star_annotation,
+                default=param.default,
+            )
+            for param in self
+        )

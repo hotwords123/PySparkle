@@ -29,7 +29,7 @@ from .scope import ScopeType, SymbolTable
 from .symbol import Symbol, SymbolType
 
 if TYPE_CHECKING:
-    from .entity import PyClass, PyEntity, PyFunction, PyModule
+    from .entity import PyClass, PyEntity, PyFunction, PyModule, PyParameters
 
 
 class PyTypeError(SemanticError):
@@ -458,7 +458,11 @@ class PyInstanceBase(PyType, ABC):
 
         for base_cls in cls.mro:
             yield TypedScope(
-                base_cls.scope, get_base_substitutor(cls, base_cls, type_args)
+                base_cls.scope,
+                PyTypeTransform.chain(
+                    get_base_substitutor(cls, base_cls, type_args),
+                    BindMethod(bind_to="instance"),
+                ),
             )
 
     def instance_attr_scopes(self) -> Iterator[TypedScope]:
@@ -621,7 +625,13 @@ class PyClassType(PyInstanceBase):
 
     def attr_scopes(self) -> Iterator[TypedScope]:
         for base_cls in self.cls.mro:
-            yield TypedScope(base_cls.scope, get_base_substitutor(self.cls, base_cls))
+            yield TypedScope(
+                base_cls.scope,
+                PyTypeTransform.chain(
+                    get_base_substitutor(self.cls, base_cls),
+                    BindMethod(bind_to="class"),
+                ),
+            )
         yield from super().attr_scopes()
 
     def get_return_type(self, args: "PyArguments") -> PyType:
@@ -838,24 +848,35 @@ class PySelfType(PyInstanceType):
 
 @final
 class PyFunctionType(PyInstanceBase):
-    def __init__(self, func: "PyFunction", mapping: Optional[PyTypeArgMap] = None):
+    def __init__(
+        self,
+        func: "PyFunction",
+        mapping: Optional[PyTypeArgMap] = None,
+        is_bound: bool = False,
+    ):
         self.func = func
         self.mapping = mapping if mapping is not None else {}
+        self.is_bound = is_bound
 
     def __str__(self) -> str:
-        name = str(self.func)
+        tag = f"bound {self.func.tag}" if self.is_bound else self.func.tag
+        name = f"<{tag} {self.func.detailed_name!r}>"
         if self.mapping:
             name += f"[{', '.join(f'{k}={v}' for k, v in self.mapping.items())}]"
         return name
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} function={self.func!r}>"
+        return (
+            f"<{self.__class__.__name__} function={self.func!r} "
+            "mapping={self.mapping!r} is_bound={self.is_bound}>"
+        )
 
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, PyFunctionType)
             and self.func is other.func
             and self.mapping == other.mapping
+            and self.is_bound == other.is_bound
         )
 
     @property
@@ -872,6 +893,13 @@ class PyFunctionType(PyInstanceBase):
     def get_inferred_type(self) -> PyType:
         # TODO: Infer the callable type from the function.
         return self
+
+    def get_parameters(self) -> "PyParameters":
+        visitor = SubstituteTypeVars(self.mapping)
+        parameters = self.func.parameters.transform(visitor)
+        if self.is_bound:
+            parameters.remove_bound_param()
+        return parameters
 
     def get_parameter(self, name: str) -> Optional[TypedSymbol]:
         if symbol := self.func.scope.get(name):
@@ -1477,6 +1505,13 @@ class PyTypeTransform(ABC):
 
         return tuple(self.visit_type(t) for t in type_args)
 
+    @staticmethod
+    def chain(*transforms: "PyTypeTransform") -> "PyTypeTransform":
+        """
+        Chains multiple type transforms together.
+        """
+        return ChainedTypeTransform(*transforms)
+
 
 class DummyTypeTransform(PyTypeTransform):
     """
@@ -1484,6 +1519,21 @@ class DummyTypeTransform(PyTypeTransform):
     """
 
     def visit_type(self, type: PyType) -> PyType:
+        return type
+
+
+class ChainedTypeTransform(PyTypeTransform):
+    """
+    A type transform that chains multiple type transforms.
+    """
+
+    def __init__(self, *transforms: PyTypeTransform):
+        self.transforms = transforms
+
+    def visit_type(self, type: PyType) -> PyType:
+        for transform in self.transforms:
+            type = transform.visit_type(type)
+
         return type
 
 
@@ -1519,7 +1569,7 @@ class SubstituteTypeVars(PyTypeTransform):
             return PyGenericAlias(type.cls, args)
 
         if isinstance(type, PyFunctionType):
-            return PyFunctionType(type.func, self.mapping)
+            return PyFunctionType(type.func, self.mapping, type.is_bound)
 
         if isinstance(type, PyTupleType):
             types = tuple(self.visit_type(t) for t in type.types)
@@ -1528,5 +1578,32 @@ class SubstituteTypeVars(PyTypeTransform):
         if isinstance(type, PyUnionType):
             items = tuple(self.visit_type(t) for t in type.items)
             return PyUnionType.from_items(items)
+
+        return type
+
+
+class BindMethod(PyTypeTransform):
+    """
+    A visitor that marks methods as bound methods.
+    """
+
+    def __init__(self, bind_to: Literal["instance", "class"] = "instance"):
+        self.bound_to = bind_to
+
+    def _should_bind(self, func: "PyFunction") -> bool:
+        if func.has_modifier("staticmethod"):
+            # Static methods are not bound.
+            return False
+
+        if func.has_modifier("classmethod"):
+            # Class methods are always bound.
+            return True
+
+        # Bound methods are only created for instances.
+        return self.bound_to == "instance"
+
+    def visit_type(self, type: PyType) -> PyType:
+        if isinstance(type, PyFunctionType) and self._should_bind(type.func):
+            return PyFunctionType(type.func, type.mapping, is_bound=True)
 
         return type
