@@ -468,37 +468,26 @@ class PythonVisitor(PythonParserVisitor):
             type: The type of the keyword parameter.
         """
         if self._called_function is not None:
-            func = self._called_function.func
-            kwargs_symbol: Optional[TypedSymbol] = None
+            parameters = self._called_function.get_parameters()
+            param = parameters.get_keyword(name)
 
-            for param in func.parameters:
-                if not param.posonly and param.star is None and param.name == name:
-                    # There is a keyword parameter by the name.
-                    symbol, type_ = self._called_function.get_parameter(param.name)
-                    self.context.set_node_info(node, symbol=symbol, type=type_)
-                    return type_
+            if param is not None:
+                symbol = self._called_function.func.scope[param.name]
+                type_ = param.get_type()
 
-                elif param.star == "**":
-                    # There is a double-star parameter. Remember it in case the keyword
-                    # parameter is not found.
-                    kwargs_symbol = self._called_function.get_parameter(param.name)
+                if param.star == "**":
+                    if (
+                        isinstance(type_, PyInstanceType)
+                        and type_.cls.full_name == "builtins.dict"
+                        and type_.type_args
+                        and len(type_.type_args) == 2
+                    ):
+                        type_ = type_.type_args[1]
+                    else:
+                        type_ = PyType.ANY
 
-            if kwargs_symbol is not None:
-                # The argument is passed to the double-star parameter.
-                symbol, type_ = kwargs_symbol
-
-                if (
-                    isinstance(type_, PyInstanceType)
-                    and type_.cls.full_name == "builtins.dict"
-                    and type_.type_args
-                    and len(type_.type_args) == 2
-                ):
-                    arg_type = type_.type_args[1]
-                else:
-                    arg_type = PyType.ANY
-
-                self.context.set_node_info(node, symbol=symbol, type=arg_type)
-                return arg_type
+                self.context.set_node_info(node, symbol=symbol, type=type_)
+                return type_
 
         # The keyword parameter is not found.
         self.context.set_node_info(node, kind=TokenKind.VARIABLE)
@@ -1454,7 +1443,7 @@ class PythonVisitor(PythonParserVisitor):
             with self._set_called_function(type_) as func:
                 if genexp := ctx.genexp():
                     arg_type = self.visitGenexp(genexp)
-                    args = PyArguments(args=[arg_type])
+                    args = PyArguments([arg_type])
                 elif arguments := ctx.arguments():
                     args = self.visitArguments(arguments)
                 else:
@@ -1960,7 +1949,7 @@ class PythonVisitor(PythonParserVisitor):
         arguments = PyArguments()
 
         for node in ctx.arg():
-            arguments.args.append(self.visitArg(node))
+            arguments.append(self.visitArg(node))
 
         if node := ctx.kwargs():
             arguments = self.visitKwargs(node, arguments=arguments)
@@ -1996,18 +1985,10 @@ class PythonVisitor(PythonParserVisitor):
             arguments = PyArguments()
 
         for node in ctx.kwargOrStarred():
-            arg = self.visitKwargOrStarred(node)
-            if isinstance(arg, PyKeywordArgument):
-                arguments.kwargs.append(arg)
-            else:
-                arguments.args.append(arg)
+            arguments.append(self.visitKwargOrStarred(node))
 
         for node in ctx.kwargOrDoubleStarred():
-            arg = self.visitKwargOrDoubleStarred(node)
-            if isinstance(arg, PyKeywordArgument):
-                arguments.kwargs.append(arg)
-            else:
-                arguments.double_stars.append(arg)
+            arguments.append(self.visitKwargOrDoubleStarred(node))
 
         return arguments
 
@@ -2051,7 +2032,7 @@ class PythonVisitor(PythonParserVisitor):
             return PyKeywordArgument(name, type_)
 
         else:
-            return self.visitExpression(ctx.expression())
+            return PyUnpackKv(self.visitExpression(ctx.expression()))
 
     # starTargets: starTarget (',' starTarget)* ','?;
     @_type_check

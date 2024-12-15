@@ -10,6 +10,7 @@ from .types import (
     PyFunctionType,
     PyGenericAlias,
     PyInstanceType,
+    PyKeywordArgument,
     PyModuleType,
     PySelfType,
     PyType,
@@ -284,13 +285,16 @@ class PyClass(_ModifiersMixin, PyEntity):
 
         # NOTE: In theory, we should handle starred arguments here, but in
         # practice, syntaxes like `class C(*args):` are hardly ever used.
-        for arg in self.arguments.args:
+        for arg in self.arguments:
             if isinstance(arg, PyClassType):
                 self.bases.append(PyInstanceType(arg.cls))
             elif isinstance(arg, PyGenericAlias):
                 # TODO: Verify that the generic alias is a valid base class.
                 has_generic_base = True
                 self.bases.append(arg.get_instance_type(convert_tuples=False))
+            elif isinstance(arg, PyKeywordArgument):
+                # Meta-classes are not supported.
+                pass
             else:
                 report_type_error(
                     PyTypeError(
@@ -452,7 +456,7 @@ class PyParameter(PyVariable):
 
         self.kwonly = kwonly
         self.posonly = posonly
-        self.star = star
+        self.star: Optional[Literal["*", "**"]] = star
         self.annotation = annotation
         self.star_annotation = star_annotation
         self.default = default
@@ -468,6 +472,68 @@ class PyParameters(list[PyParameter]):
 
     def __str__(self):
         return ", ".join(str(param) for param in self)
+
+    def copy(self) -> "PyParameters":
+        return PyParameters(self)
+
+    def get_positionals(self) -> list[PyParameter]:
+        """
+        Returns the positional parameters, including starred parameters.
+        """
+        params: list[PyParameter] = []
+        for param in self:
+            if param.kwonly or param.star == "**":
+                break
+            params.append(param)
+        return params
+
+    def get_positional(self, index: int) -> Optional[PyParameter]:
+        """
+        Returns the positional parameter at the specified index.
+
+        If a starred parameter is encountered before the index, it is returned instead.
+        """
+        for i, param in enumerate(self):
+            if param.kwonly or param.star == "**":
+                break
+            if param.star == "*":
+                return param
+            if i == index:
+                return param
+        return None
+
+    def get_keyword(self, name: str) -> Optional[PyParameter]:
+        """
+        Returns the keyword parameter with the specified name.
+
+        If no such parameter is found, but a double-starred parameter is found, it is
+        returned instead.
+        """
+        kwargs: Optional[PyParameter] = None
+        for param in self:
+            if param.star == "**":
+                kwargs = param
+            elif param.name == name and not param.posonly and param.star is None:
+                return param
+        return kwargs
+
+    def get_starred(self) -> Optional[PyParameter]:
+        """
+        Returns the starred parameter if present.
+        """
+        for param in self:
+            if param.star == "*":
+                return param
+        return None
+
+    def get_double_starred(self) -> Optional[PyParameter]:
+        """
+        Returns the double-starred parameter if present.
+        """
+        for param in self:
+            if param.star == "**":
+                return param
+        return None
 
     def has_bound_param(self) -> bool:
         """
@@ -496,7 +562,7 @@ class PyParameters(list[PyParameter]):
         return PyParameters(
             PyParameter(
                 param.name,
-                transform.visit_type(param.type),
+                transform.visit_type(param.type) if param.type else None,
                 kwonly=param.kwonly,
                 posonly=param.posonly,
                 star=param.star,

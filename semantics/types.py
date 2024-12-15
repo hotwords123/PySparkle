@@ -26,7 +26,7 @@ from typing import (
 
 from .base import SemanticError
 from .scope import ScopeType, SymbolTable
-from .symbol import Symbol, SymbolType
+from .symbol import Symbol
 
 if TYPE_CHECKING:
     from .entity import PyClass, PyEntity, PyFunction, PyModule, PyParameters
@@ -513,7 +513,7 @@ class PyInstanceBase(PyType, ABC):
         return self.get_method_return_type("__call__", args)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
-        return self.get_method_return_type("__getitem__", PyArguments(args=[key]))
+        return self.get_method_return_type("__getitem__", PyArguments([key]))
 
     def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
         assert protocol.has_modifier("protocol")
@@ -636,13 +636,14 @@ class PyClassType(PyInstanceBase):
 
     def get_return_type(self, args: "PyArguments") -> PyType:
         if self.cls.full_name == "typing.TypeVar":
-            # TODO: Actually handle function calls.
-            if (
-                args.args
-                and isinstance(arg := args.args[0], PyLiteralType)
-                and type(arg.value) is str
-            ):
-                return PyTypeVarDef(PyTypeVar(arg.value))
+            init_func = self.cls.lookup_method("__init__")
+            parameters = init_func.parameters.copy()
+            parameters.remove_bound_param()
+            result = match_arguments_to_parameters(args, parameters)
+
+            name = result.values.get("name")
+            if name and isinstance(name, PyLiteralType) and type(name.value) is str:
+                return PyTypeVarDef(PyTypeVar(name.value))
             else:
                 report_type_error(PyTypeError("Invalid type variable definition"))
                 return PyType.ANY
@@ -900,14 +901,6 @@ class PyFunctionType(PyInstanceBase):
         if self.is_bound:
             parameters.remove_bound_param()
         return parameters
-
-    def get_parameter(self, name: str) -> Optional[TypedSymbol]:
-        if symbol := self.func.scope.get(name):
-            if symbol.type == SymbolType.PARAMETER:
-                visitor = SubstituteTypeVars(self.mapping)
-                return TypedSymbol(symbol, visitor.visit_type(symbol.get_type()))
-
-        return None
 
     @staticmethod
     def from_stub(name: str) -> PyType:
@@ -1330,17 +1323,94 @@ class PyKeywordArgument(NamedTuple):
     type: PyType
 
 
-class PyArguments:
-    def __init__(
-        self,
-        *,
-        args: Optional[list[PyType]] = None,
-        kwargs: Optional[list[PyKeywordArgument]] = None,
-        double_stars: Optional[list[PyType]] = None,
-    ):
-        self.args = args if args is not None else []
-        self.kwargs = kwargs if kwargs is not None else []
-        self.double_stars = double_stars if double_stars is not None else []
+class PyArguments(list[PyType | PyKeywordArgument]):
+    """
+    A list of arguments in a function call or definition.
+
+    The list can contain positional arguments, keyword arguments, and unpacked items or
+    key-value pairs.
+    """
+
+    def get_positionals(self) -> list[PyType]:
+        return [
+            x for x in self if isinstance(x, PyType) and not isinstance(x, PyUnpackKv)
+        ]
+
+    def get_keywords(self) -> list[PyKeywordArgument]:
+        return [x for x in self if isinstance(x, PyKeywordArgument)]
+
+
+class ArgumentMatch(NamedTuple):
+    """
+    Stores the result of matching arguments to parameters in a function call.
+    """
+
+    matched: dict[int, int]
+    """The mapping of argument indices to parameter indices."""
+    values: dict[str, PyType]
+    """The mapping of keyword argument names to their types."""
+
+
+def match_arguments_to_parameters(
+    arguments: PyArguments, parameters: "PyParameters"
+) -> ArgumentMatch:
+    """
+    Matches the arguments against the given parameters.
+
+    Args:
+        arguments: The arguments to match.
+        parameters: The parameters to match against.
+
+    Returns:
+        result: The result of the matching process.
+    """
+    result = ArgumentMatch(matched={}, values={})
+    pos_params = parameters.get_positionals()
+    pos_index = 0
+    star_args: list[PyType] = []
+
+    for i, arg in enumerate(arguments):
+        if isinstance(arg, PyKeywordArgument):
+            # Keyword arguments are matched by name.
+            if param := parameters.get_keyword(arg.name):
+                result.matched[i] = parameters.index(param)
+                if param.star is None:
+                    result.values[param.name] = arg.type
+
+        elif isinstance(arg, PyUnpackKv):
+            # Cannot match unpacked key-value pairs.
+            pass
+
+        else:
+            # Positional arguments are matched by position.
+            if not 0 <= pos_index < len(pos_params):
+                continue
+
+            if isinstance(arg, PyUnpack):
+                # Unpack the starred item if possible.
+                unpacked = arg.get_unpacked_types()
+                if unpacked is None:
+                    pos_index = -1
+                    continue
+            else:
+                unpacked = (arg,)
+
+            result.matched[i] = pos_index
+
+            for item in unpacked:
+                param = pos_params[pos_index]
+                if param.star == "*":
+                    star_args.append(item)
+                else:
+                    result.values[param.name] = item
+                    pos_index += 1
+                    if pos_index >= len(pos_params):
+                        break
+
+    if star_param := parameters.get_starred():
+        result.values[star_param.name] = PyTupleType.from_starred(star_args)
+
+    return result
 
 
 class PyKvPair(NamedTuple):
