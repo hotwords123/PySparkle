@@ -1407,9 +1407,17 @@ class PythonVisitor(PythonParserVisitor):
 
     # TODO: bitwise, arithmetic
 
-    # awaitPrimary: 'await' primary | primary;
+    # awaitPrimary
+    #   : 'await' primary
+    #   | primary
+    #   | 'await' invalidPrimary
+    #   | invalidPrimary;
     @_type_check
     def visitAwaitPrimary(self, ctx: PythonParser.AwaitPrimaryContext) -> PyType:
+        if ctx.invalidPrimary():
+            self.visitInvalidPrimary(ctx.invalidPrimary())
+            return PyType.ANY
+
         type_ = self.visitPrimary(ctx.primary())
 
         if ctx.AWAIT():
@@ -1458,6 +1466,20 @@ class PythonVisitor(PythonParserVisitor):
                 args = PyArguments()
 
             return type_.get_return_type(args)
+
+    # invalidPrimary
+    #   : primary '.'
+    #   | primary '[' ']';
+    @_both_passes
+    def visitInvalidPrimary(self, ctx: PythonParser.InvalidPrimaryContext):
+        if self.pass_num == 1:
+            if node := ctx.DOT():
+                self.context.set_node_info(node, kind=TokenKind.ERROR)
+            else:
+                self.context.set_node_info(ctx.LSQB(), kind=TokenKind.ERROR)
+                self.context.set_node_info(ctx.RSQB(), kind=TokenKind.ERROR)
+
+        self.visitPrimary(ctx.primary())
 
     # slices: slice (',' slice)* ','?;
     @_type_check
@@ -2194,7 +2216,8 @@ class PythonVisitor(PythonParserVisitor):
     # targetWithStarAtom
     #   : primary '.' NAME
     #   | primary '[' slices ']'
-    #   | starAtom;
+    #   | starAtom
+    #   | invalidPrimary;
     @_type_check
     def visitTargetWithStarAtom(
         self,
@@ -2202,6 +2225,9 @@ class PythonVisitor(PythonParserVisitor):
         *,
         value_type: PyType = PyType.ANY,
     ):
+        if node := ctx.invalidPrimary():
+            return self.visitInvalidPrimary(node)
+
         if star_atom := ctx.starAtom():
             return self.visitStarAtom(star_atom, value_type=value_type)
 
@@ -2296,7 +2322,8 @@ class PythonVisitor(PythonParserVisitor):
 
     # singleSubscriptAttributeTarget
     #   : primary '.' NAME
-    #   | primary '[' slices ']';
+    #   | primary '[' slices ']'
+    #   | invalidPrimary;
     @_type_check
     def visitSingleSubscriptAttributeTarget(
         self,
@@ -2304,6 +2331,9 @@ class PythonVisitor(PythonParserVisitor):
         *,
         value_type: Optional[PyType] = None,
     ):
+        if node := ctx.invalidPrimary():
+            return self.visitInvalidPrimary(node)
+
         type_ = self.visitPrimary(ctx.primary())
 
         if name_node := ctx.NAME():
@@ -2323,9 +2353,13 @@ class PythonVisitor(PythonParserVisitor):
     # delTarget
     #   : primary '.' NAME
     #   | primary '[' slices ']'
-    #   | delTargetAtom;
+    #   | delTargetAtom
+    #   | invalidPrimary;
     @_both_passes
     def visitDelTarget(self, ctx: PythonParser.DelTargetContext):
+        if node := ctx.invalidPrimary():
+            return self.visitInvalidPrimary(node)
+
         if atom := ctx.delTargetAtom():
             return self.visitDelTargetAtom(atom)
 

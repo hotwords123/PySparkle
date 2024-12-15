@@ -390,7 +390,9 @@ arithmetic
 
 awaitPrimary
     : 'await' primary
-    | primary;
+    | primary
+    | 'await' invalidPrimary
+    | invalidPrimary;
 
 primary
     : primary '.' NAME
@@ -398,6 +400,10 @@ primary
     | primary '(' arguments? ')'
     | primary '[' slices ']'
     | atom;
+
+invalidPrimary
+    : primary '.'
+    | primary '[' ']';
 
 slices: slice (',' slice)* ','?;
 
@@ -556,7 +562,8 @@ starTarget
 targetWithStarAtom
     : primary '.' NAME
     | primary '[' slices ']'
-    | starAtom;
+    | starAtom
+    | invalidPrimary;
 
 starAtom
     : NAME
@@ -571,7 +578,8 @@ singleTarget
 
 singleSubscriptAttributeTarget
     : primary '.' NAME
-    | primary '[' slices ']';
+    | primary '[' slices ']'
+    | invalidPrimary;
 
 // Targets for del statements
 // --------------------------
@@ -582,7 +590,8 @@ delTargets
 delTarget
     : primary '.' NAME
     | primary '[' slices ']'
-    | delTargetAtom;
+    | delTargetAtom
+    | invalidPrimary;
 
 delTargetAtom
     : NAME
