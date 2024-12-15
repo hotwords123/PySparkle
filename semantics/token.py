@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, TypedDict
 from grammar import PythonParser
 
 if TYPE_CHECKING:
+    from antlr4.Token import CommonToken
+
     from .symbol import Symbol
     from .types import PyType
 
@@ -163,3 +165,31 @@ TOKEN_KIND_MAP = {
     for kind, token_types in TOKEN_KIND_SPEC.items()
     for token_type in token_types
 }
+
+SYNTHETIC_TOKEN_TYPES = {
+    PythonParser.INDENT,
+    PythonParser.DEDENT,
+    PythonParser.EOF,
+}
+
+BLANK_TOKEN_TYPES = {
+    *SYNTHETIC_TOKEN_TYPES,
+    PythonParser.NEWLINE,
+    PythonParser.WS,
+}
+
+
+def is_synthetic_token(token: "CommonToken") -> bool:
+    """
+    Returns whether a token is synthetic, i.e. not part of the source code.
+    """
+    return token.type in SYNTHETIC_TOKEN_TYPES or (
+        token.type == PythonParser.NEWLINE and token.text == "<NEWLINE>"
+    )
+
+
+def is_blank_token(token: "CommonToken") -> bool:
+    """
+    Returns whether a token is blank, i.e. contains no text or whitespace only.
+    """
+    return token.type in BLANK_TOKEN_TYPES

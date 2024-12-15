@@ -13,7 +13,6 @@ from typeshed_client import get_search_context
 
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
-from grammar import PythonParser
 from lsp.utils import (
     node_at_token_index,
     snake_case_to_camel_case,
@@ -21,8 +20,8 @@ from lsp.utils import (
     token_end_position,
     token_start_position,
 )
-from semantics.entity import PyClass, PyFunction, PyModule, PyParameter, PyVariable
-from semantics.token import TokenKind, TokenModifier
+from semantics.entity import PyClass, PyFunction, PyModule
+from semantics.token import TokenKind, TokenModifier, is_blank_token
 from semantics.types import (
     PyClassType,
     PyFunctionType,
@@ -122,11 +121,7 @@ class PythonLanguageServer(LanguageServer):
 
         for token in module.source.stream.tokens:
             token: CommonToken
-            if token.type in (
-                PythonParser.INDENT,
-                PythonParser.DEDENT,
-                PythonParser.EOF,
-            ):
+            if is_blank_token(token):
                 continue
 
             # Compute token kind and modifiers.

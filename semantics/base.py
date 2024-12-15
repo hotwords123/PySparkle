@@ -4,6 +4,8 @@ from antlr4 import ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import ParseTree, TerminalNode
 
+from semantics.token import is_synthetic_token
+
 
 class SemanticError(Exception):
     def __init__(
@@ -50,6 +52,10 @@ def get_token_end_position(token: CommonToken) -> tuple[int, int]:
     Returns:
         A tuple of the line and column of the end position.
     """
+    if is_synthetic_token(token):
+        # Synthetic tokens do not correspond to any text in the source code.
+        return token.line, token.column
+
     lines = token.text.split("\n")
     if len(lines) == 1:
         return token.line, token.column + len(token.text)
