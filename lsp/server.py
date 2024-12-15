@@ -15,12 +15,13 @@ from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
 from grammar import PythonParser
 from lsp.utils import (
+    node_at_token_index,
     snake_case_to_camel_case,
     token_at_position,
     token_end_position,
     token_start_position,
 )
-from semantics.entity import PyModule
+from semantics.entity import PyClass, PyFunction, PyModule, PyParameter, PyVariable
 from semantics.token import TokenKind, TokenModifier
 from semantics.types import (
     PyClassType,
@@ -34,6 +35,45 @@ TOKEN_KINDS = [kind.value for kind in TokenKind]
 TOKEN_MODIFIERS = [
     snake_case_to_camel_case(modifier.name) for modifier in TokenModifier
 ]
+
+PYTHON_KEYWORDS = [
+    "False",
+    "await",
+    "else",
+    "import",
+    "pass",
+    "None",
+    "break",
+    "except",
+    "in",
+    "raise",
+    "True",
+    "class",
+    "finally",
+    "is",
+    "return",
+    "and",
+    "continue",
+    "for",
+    "lambda",
+    "try",
+    "as",
+    "def",
+    "from",
+    "nonlocal",
+    "while",
+    "assert",
+    "del",
+    "global",
+    "not",
+    "with",
+    "async",
+    "elif",
+    "if",
+    "or",
+    "yield",
+]
+
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +132,9 @@ class PythonLanguageServer(LanguageServer):
             # Compute token kind and modifiers.
             kind = module.context.get_token_kind(token)
             modifiers = module.context.get_token_modifiers(token)
+
+            if kind is TokenKind.NONE:
+                continue
 
             # Convert to integer values.
             kind_value = TOKEN_KINDS.index(kind.value)
@@ -191,6 +234,53 @@ class PythonLanguageServer(LanguageServer):
             ),
         )
 
+    def get_completions(
+        self, uri: str, position: lsp.Position
+    ) -> Optional[lsp.CompletionList]:
+        if uri not in self.documents:
+            return None
+
+        module = self.documents[uri]
+        token = token_at_position(module.source.stream.tokens, position)
+        if token is None:
+            return None
+
+        node = node_at_token_index(module.source.tree, token.tokenIndex)
+        scope = module.context.get_node_scope(node)
+
+        items: list[lsp.CompletionItem] = []
+
+        for keyword in PYTHON_KEYWORDS:
+            items.append(
+                lsp.CompletionItem(
+                    label=keyword,
+                    kind=lsp.CompletionItemKind.Keyword,
+                )
+            )
+
+        for symbol in scope.iter_symbols(parents=True):
+            kind = lsp.CompletionItemKind.Variable
+            if entity := symbol.resolve_entity():
+                if isinstance(entity, PyModule):
+                    kind = lsp.CompletionItemKind.Module
+                elif isinstance(entity, PyClass):
+                    kind = lsp.CompletionItemKind.Class
+                elif isinstance(entity, PyFunction):
+                    if entity.is_method:
+                        kind = lsp.CompletionItemKind.Method
+                    else:
+                        kind = lsp.CompletionItemKind.Function
+
+            items.append(
+                lsp.CompletionItem(
+                    label=symbol.name,
+                    kind=kind,
+                    detail=symbol.full_name,
+                )
+            )
+
+        return lsp.CompletionList(is_incomplete=False, items=items)
+
 
 server = PythonLanguageServer()
 
@@ -241,3 +331,14 @@ def goto_definition(
 ) -> Optional[lsp.Location]:
     logger.info(f"Requested definition: {params.text_document.uri}")
     return ls.get_definition(params.text_document.uri, params.position)
+
+
+@server.feature(
+    lsp.TEXT_DOCUMENT_COMPLETION,
+    lsp.CompletionOptions(trigger_characters=["."]),
+)
+def completions(
+    ls: PythonLanguageServer, params: lsp.CompletionParams
+) -> Optional[lsp.CompletionList]:
+    logger.info(f"Requested completions: {params.text_document.uri}")
+    return ls.get_completions(params.text_document.uri, params.position)

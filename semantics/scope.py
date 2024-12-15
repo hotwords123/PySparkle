@@ -107,7 +107,7 @@ class SymbolTable:
 
         scope = self
         while scope is not None:
-            for symbol in self.symbols.values():
+            for symbol in scope.symbols.values():
                 if public_only and not symbol.public:
                     continue
                 yield symbol
