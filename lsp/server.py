@@ -19,6 +19,7 @@ from semantics.entity import PyClass, PyFunction, PyModule
 from semantics.symbol import Symbol
 from semantics.token import TokenKind, TokenModifier, is_blank_token
 from semantics.types import (
+    PyArguments,
     PyClassType,
     PyFunctionType,
     PyGenericAlias,
@@ -350,21 +351,45 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         func_type, func_args = func_call
-        parameters = func_type.get_parameters()
+        overloads = func_type.get_overloads()
 
+        # Find the index of the active argument.
         if arguments_node := call_node.arguments():
-            # Find the index of the active argument.
             arg_index = get_argument_index(arguments_node, token)
-
-            # Find the corresponding parameter.
-            result = match_arguments_to_parameters(func_args, parameters)
-            if arg_index < len(func_args):
-                active_param_index = result.matched.get(arg_index, -1)
-            else:
-                active_param_index = result.next_positional
-
         else:
-            active_param_index = 0 if parameters.get_positional(0) else -1
+            arg_index = 0
+
+        return lsp.SignatureHelp(
+            signatures=[
+                self.get_signature_information(f, func_args, arg_index)
+                for f in overloads
+            ],
+            active_signature=0,
+        )
+
+    @staticmethod
+    def get_signature_information(
+        func_type: PyFunctionType, func_args: PyArguments, arg_index: int
+    ) -> lsp.SignatureInformation:
+        """
+        Construct a signature information object for the given function type.
+
+        Args:
+            func_type: The function type to construct the signature for.
+            func_args: The arguments passed to the function.
+            arg_index: The index of the active argument.
+
+        Returns:
+            A signature information object for the given function type.
+        """
+        # Find the corresponding parameter.
+        parameters = func_type.get_parameters()
+        result = match_arguments_to_parameters(func_args, parameters)
+
+        if arg_index < len(func_args):
+            active_param_index = result.matched.get(arg_index, -1)
+        else:
+            active_param_index = result.next_positional
 
         # Construct the signature help.
         param_labels = [param.get_label() for param in parameters]
@@ -395,18 +420,13 @@ class PythonLanguageServer(LanguageServer):
             buf.write(f") -> {return_type}")
             func_label = buf.getvalue()
 
-        return lsp.SignatureHelp(
-            signatures=[
-                lsp.SignatureInformation(
-                    label=func_label,
-                    documentation=None,
-                    parameters=[
-                        lsp.ParameterInformation(label=label) for label in param_labels
-                    ],
-                    active_parameter=active_param_index,
-                )
+        return lsp.SignatureInformation(
+            label=func_label,
+            documentation=None,
+            parameters=[
+                lsp.ParameterInformation(label=label) for label in param_labels
             ],
-            active_signature=0,
+            active_parameter=active_param_index,
         )
 
 

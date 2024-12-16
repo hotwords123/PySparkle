@@ -479,10 +479,10 @@ class PyInstanceBase(PyType, ABC):
                 base_cls.instance_scope, get_base_substitutor(cls, base_cls, type_args)
             )
 
-    def lookup_method(self, name: str) -> Optional["PyFunctionType"]:
+    def lookup_method(self, *names: str) -> Optional["PyFunctionType"]:
         for scope in self.class_attr_scopes():
-            if attr := scope.get(name):
-                if isinstance(attr.type, PyFunctionType):
+            for name in names:
+                if (attr := scope.get(name)) and isinstance(attr.type, PyFunctionType):
                     return attr.type
 
         return None
@@ -538,7 +538,7 @@ class PyInstanceBase(PyType, ABC):
         return self.lookup_method("__call__")
 
     def get_constructor_type(self) -> Optional["PyFunctionType"]:
-        return self.lookup_method("__init__") or self.lookup_method("__new__")
+        return self.lookup_method("__init__", "__new__")
 
 
 class PyTypeVarDef(PyInstanceBase):
@@ -909,6 +909,16 @@ class PyFunctionType(PyInstanceBase):
         if self.is_bound:
             parameters.remove_bound_param()
         return parameters
+
+    def get_overloads(self) -> list["PyFunctionType"]:
+        funcs = [self.func] + self.func.overloads
+        overloads = [f for f in funcs if f.has_modifier("overload")]
+
+        # If the function has overloads, use them instead of the original function.
+        if overloads:
+            funcs = overloads
+
+        return [PyFunctionType(f, self.mapping, self.is_bound) for f in funcs]
 
     @staticmethod
     def from_stub(name: str) -> PyType:
@@ -1398,6 +1408,8 @@ def match_arguments_to_parameters(
             if next_positional == -1:
                 continue
 
+            matched[i] = next_positional
+
             if isinstance(arg, PyUnpack):
                 # Unpack the starred item if possible.
                 unpacked = arg.get_unpacked_types()
@@ -1406,8 +1418,6 @@ def match_arguments_to_parameters(
                     continue
             else:
                 unpacked = (arg,)
-
-            matched[i] = next_positional
 
             for item in unpacked:
                 param = pos_params[next_positional]
