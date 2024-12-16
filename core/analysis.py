@@ -181,12 +181,19 @@ class PythonAnalyzer:
         """
         try:
             if stmt.relative is not None:
+                # Ensure that the relative import is valid.
+                if not base_name:
+                    raise PyImportError(
+                        "." * (1 + stmt.relative) + ".".join(stmt.path),
+                        "attempted relative import with no known parent package",
+                    )
+
                 # Resolve the full path of the module to import from.
                 base_path = base_name.split(".")
                 if (offset := len(base_path) - stmt.relative) <= 0:
                     raise PyImportError(
                         "." * (1 + stmt.relative) + ".".join(stmt.path),
-                        f"Attempted relative import beyond top-level package",
+                        "attempted relative import beyond top-level package",
                     )
                 path = base_path[:offset] + stmt.path
 
