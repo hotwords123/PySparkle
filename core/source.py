@@ -3,7 +3,7 @@ from typing import NamedTuple
 
 from antlr4 import CommonTokenStream, FileStream, InputStream, ParserRuleContext
 
-from grammar import PythonErrorStrategy, PythonLexer, PythonParser
+from grammar import PythonErrorListener, PythonErrorStrategy, PythonLexer, PythonParser
 
 
 class PythonSource(NamedTuple):
@@ -18,6 +18,8 @@ class PythonSource(NamedTuple):
         lexer = PythonLexer(input_stream)
         stream = CommonTokenStream(lexer)
         parser = PythonParser(stream)
+        parser.removeErrorListeners()
+        parser.addErrorListener(PythonErrorListener())
         parser._errHandler = PythonErrorStrategy()
         tree = parser.file_()
         return cls(input_stream, lexer, stream, parser, tree)

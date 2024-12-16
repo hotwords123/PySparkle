@@ -10,7 +10,6 @@ class PythonErrorStrategy(DefaultErrorStrategy):
         PythonParser.NEWLINE,
         PythonParser.INDENT,
         PythonParser.DEDENT,
-        PythonParser.COLON,
         Token.EOF,
     )
 
