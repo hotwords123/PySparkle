@@ -524,7 +524,8 @@ class PyInstanceBase(PyType, ABC):
         return self.get_method_return_type("__getitem__", PyArguments([key]))
 
     def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
-        assert protocol.has_modifier("protocol")
+        # For some reason, some ABCs (e.g. typing.Mapping) are not marked as protocols.
+        # assert protocol.has_modifier("protocol")
 
         # Check nominal subtyping.
         if protocol in self.get_cls().mro:
