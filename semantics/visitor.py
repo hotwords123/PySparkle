@@ -3,6 +3,7 @@ from ast import literal_eval
 from contextlib import contextmanager
 from typing import Iterator, Literal, NamedTuple, Optional
 
+from antlr4.error.Errors import RecognitionException
 from antlr4.ParserRuleContext import ParserRuleContext
 from antlr4.tree.Tree import ErrorNode, TerminalNode
 
@@ -37,7 +38,6 @@ from .types import (
     PyUnionType,
     PyUnpack,
     PyUnpackKv,
-    TypedSymbol,
     infer_dict_display,
     infer_list_display,
     set_error_reporter,
@@ -78,16 +78,20 @@ def _visitor_guard(
             old_ctx, visitor._current_ctx = visitor._current_ctx, ctx
 
             action = passes.get(visitor.pass_num, "visit")
-            if action == "visit" and ctx.exception is not None:
-                action = error_action
+            if ctx.exception is not None:
+                visitor._handle_parser_error(ctx)
+                if action == "visit":
+                    action = error_action
 
             result = None
             try:
                 match action:
                     case "visit":
+                        if error_action == "default":
+                            visitor._visit_error_nodes(ctx)
                         result = func(visitor, ctx, **kwargs)
                     case "default":
-                        result = visitor.visitChildren(ctx)
+                        result = super(PythonVisitor, visitor).visitChildren(ctx)
                     case "skip":
                         pass
 
@@ -539,7 +543,44 @@ class PythonVisitor(PythonParserVisitor):
 
     def visitErrorNode(self, node: ErrorNode):
         if self.pass_num == 1:
-            self.context.set_node_info(node, kind=TokenKind.ERROR)
+            token = node.getSymbol()
+
+            if (
+                isinstance(parent_ctx := node.parentCtx, ParserRuleContext)
+                and isinstance(error := parent_ctx.exception, RecognitionException)
+                and error.offendingToken is not None
+                and token.tokenIndex >= error.offendingToken.tokenIndex
+            ):
+                # The error has already been reported.
+                return
+
+            if token.tokenIndex == -1 and token.text.startswith("<missing "):
+                self._report_error(PySyntaxError(token.text[1:-1], token))
+            else:
+                self.context.set_node_info(node, kind=TokenKind.ERROR)
+                self._report_error(
+                    PySyntaxError(f"unexpected token {token.text!r}", token)
+                )
+
+    @_visitor_guard(first_pass="default", second_pass="default")
+    def visitChildren(self, ctx: ParserRuleContext):
+        return super().visitChildren(ctx)
+
+    def _visit_error_nodes(self, ctx: ParserRuleContext):
+        if self.pass_num == 1:
+            for child in ctx.children:
+                if isinstance(child, ErrorNode):
+                    self.visitErrorNode(child)
+
+    def _handle_parser_error(self, ctx: ParserRuleContext):
+        if self.pass_num == 1 and (error := ctx.exception):
+            if isinstance(error, RecognitionException):
+                if error.message and error.offendingToken is not None:
+                    self._report_error(
+                        PySyntaxError(error.message, error.offendingToken, ctx.stop)
+                    )
+            else:
+                self._report_error(PySyntaxError(str(error)).with_context(ctx))
 
     # invalidBlock: INDENT statements DEDENT;
     @_visitor_guard(error_action="visit")
@@ -551,9 +592,10 @@ class PythonVisitor(PythonParserVisitor):
 
     @_visitor_guard(second_pass="skip", error_action="visit")
     def visitInvalidToken(self, ctx: PythonParser.InvalidTokenContext):
-        for node in ctx.children:
-            if isinstance(node, TerminalNode):
-                self.context.set_node_info(node, kind=TokenKind.ERROR)
+        token = ctx.start
+        self._report_error(
+            PySyntaxError(f"unexpected token {token.text!r}", token).with_context(ctx)
+        )
 
     # singleTarget ':' expression ('=' assignmentRhs)?
     @_both_passes
@@ -1456,10 +1498,17 @@ class PythonVisitor(PythonParserVisitor):
     def visitInvalidPrimary(self, ctx: PythonParser.InvalidPrimaryContext):
         if self.pass_num == 1:
             if node := ctx.DOT():
-                self.context.set_node_info(node, kind=TokenKind.ERROR)
+                self._report_error(
+                    PySyntaxError("expected attribute name after '.'", node.getSymbol())
+                )
             else:
-                self.context.set_node_info(ctx.LSQB(), kind=TokenKind.ERROR)
-                self.context.set_node_info(ctx.RSQB(), kind=TokenKind.ERROR)
+                self._report_error(
+                    PySyntaxError(
+                        "expected slices inside '[]'",
+                        ctx.LSQB().getSymbol(),
+                        ctx.RSQB().getSymbol(),
+                    )
+                )
 
         self.visitPrimary(ctx.primary())
 
