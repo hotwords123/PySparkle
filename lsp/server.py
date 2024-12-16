@@ -359,12 +359,14 @@ class PythonLanguageServer(LanguageServer):
         else:
             arg_index = 0
 
+        signatures = [
+            self.get_signature_information(f, func_args, arg_index) for f in overloads
+        ]
         return lsp.SignatureHelp(
-            signatures=[
-                self.get_signature_information(f, func_args, arg_index)
-                for f in overloads
-            ],
-            active_signature=0,
+            signatures=[s[0] for s in signatures],
+            active_signature=max(
+                range(len(signatures)), key=lambda i: signatures[i][1]
+            ),
         )
 
     @staticmethod
@@ -386,10 +388,29 @@ class PythonLanguageServer(LanguageServer):
         parameters = func_type.get_parameters()
         result = match_arguments_to_parameters(func_args, parameters)
 
+        # Compute the matching score to rank the signature.
+        score = (
+            -10 * len(result.mismatched_args)
+            - 5 * len(result.duplicate_args)
+            - 2 * len(result.missing_params)
+        )
+
+        if (
+            not result.mismatched_args
+            and not result.duplicate_args
+            and not result.missing_params
+        ):
+            # If all arguments match the parameters, add a bonus to the score.
+            score += 5
+
         if arg_index < len(func_args):
             active_param_index = result.matched.get(arg_index, -1)
         else:
             active_param_index = result.next_positional
+            if arg_index > 0 and result.is_complete:
+                # If the user typed a comma after the last argument, but there are no
+                # more parameters to fill, penalize the score.
+                score -= 10
 
         # Construct the signature help.
         param_labels = [param.get_label() for param in parameters]
@@ -417,10 +438,15 @@ class PythonLanguageServer(LanguageServer):
 
                 buf.write(param_labels[i])
 
+            if parameters and not slash:
+                buf.write(", /")
+
             buf.write(f") -> {return_type}")
             func_label = buf.getvalue()
 
-        return lsp.SignatureInformation(
+        logger.info(f"Signature: {func_label}, score: {score}")
+
+        signature = lsp.SignatureInformation(
             label=func_label,
             documentation=None,
             parameters=[
@@ -428,6 +454,7 @@ class PythonLanguageServer(LanguageServer):
             ],
             active_parameter=active_param_index,
         )
+        return signature, score
 
 
 server = PythonLanguageServer()

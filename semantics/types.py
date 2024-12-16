@@ -1369,6 +1369,14 @@ class ArgumentMatch(NamedTuple):
     """The mapping of keyword argument names to their types."""
     next_positional: int
     """The index of the next positional parameter to match, or -1 if no more."""
+    mismatched_args: list[int] = []
+    """The indices of arguments that could not be matched."""
+    duplicate_args: list[int] = []
+    """The indices of arguments that were matched multiple times."""
+    missing_params: list[int] = []
+    """The indices of parameters that could not be matched."""
+    is_complete: bool = False
+    """Whether there may be more parameters to match."""
 
 
 def match_arguments_to_parameters(
@@ -1389,7 +1397,13 @@ def match_arguments_to_parameters(
 
     matched: dict[int, int] = {}
     values: dict[str, PyType] = {}
-    next_positional = 0 if pos_params else -1
+    next_positional: int = 0
+    mismatched_args: list[int] = []
+    duplicate_args: list[int] = []
+    missing_params: list[int] = []
+
+    # Whether the next positional parameter to match is unknown (due to starred items).
+    unknown_positional: bool = False
 
     for i, arg in enumerate(arguments):
         if isinstance(arg, PyKeywordArgument):
@@ -1397,7 +1411,12 @@ def match_arguments_to_parameters(
             if param := parameters.get_keyword(arg.name):
                 matched[i] = parameters.index(param)
                 if param.star is None:
-                    values[param.name] = arg.type
+                    if param.name in values:
+                        duplicate_args.append(i)
+                    else:
+                        values[param.name] = arg.type
+            else:
+                mismatched_args.append(i)
 
         elif isinstance(arg, PyUnpackKv):
             # Cannot match unpacked key-value pairs.
@@ -1405,7 +1424,10 @@ def match_arguments_to_parameters(
 
         else:
             # Positional arguments are matched by position.
-            if next_positional == -1:
+            if unknown_positional:
+                continue
+            if next_positional >= len(pos_params):
+                mismatched_args.append(i)
                 continue
 
             matched[i] = next_positional
@@ -1414,26 +1436,52 @@ def match_arguments_to_parameters(
                 # Unpack the starred item if possible.
                 unpacked = arg.get_unpacked_types()
                 if unpacked is None:
-                    next_positional = -1
+                    unknown_positional = True
                     continue
             else:
                 unpacked = (arg,)
 
             for item in unpacked:
+                if next_positional >= len(pos_params):
+                    mismatched_args.append(i)
+                    break
+
                 param = pos_params[next_positional]
                 if param.star == "*":
                     star_args.append(item)
                 else:
-                    values[param.name] = item
+                    if param.name in values:
+                        duplicate_args.append(i)
+                    else:
+                        values[param.name] = item
                     next_positional += 1
-                    if next_positional >= len(pos_params):
-                        next_positional = -1
-                        break
 
-    if star_param := parameters.get_starred():
-        values[star_param.name] = PyTupleType.from_starred(star_args)
+    if unknown_positional or next_positional >= len(pos_params):
+        next_positional = -1
 
-    return ArgumentMatch(matched, values, next_positional)
+    is_complete: bool = True
+    for i, param in enumerate(pos_params):
+        if param.star == "*":
+            is_complete = False
+            values[param.name] = PyTupleType.from_starred(star_args)
+
+        elif param.star == "**":
+            is_complete = False
+
+        elif param.name not in values:
+            is_complete = False
+            if param.default is None:
+                missing_params.append(i)
+
+    return ArgumentMatch(
+        matched,
+        values,
+        next_positional,
+        mismatched_args,
+        duplicate_args,
+        missing_params,
+        is_complete,
+    )
 
 
 class PyKvPair(NamedTuple):
