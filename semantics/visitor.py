@@ -1998,11 +1998,15 @@ class PythonVisitor(PythonParserVisitor):
 
     # kwargOrStarred
     #   : NAME '=' expression
-    #   | starredExpression;
+    #   | starredExpression
+    #   | invalidKwarg;
     @_type_check
     def visitKwargOrStarred(
         self, ctx: PythonParser.KwargOrStarredContext
     ) -> PyKeywordArgument | PyType:
+        if node := ctx.invalidKwarg():
+            return self.visitInvalidKwarg(node)
+
         if node := ctx.NAME():
             name = self.visitName(node)
             self._access_func_kwarg(name, node)
@@ -2010,16 +2014,20 @@ class PythonVisitor(PythonParserVisitor):
             type_ = self.visitExpression(ctx.expression())
             return PyKeywordArgument(name, type_)
 
-        elif node := ctx.starredExpression():
-            return self.visitStarredExpression(node)
+        else:
+            return self.visitStarredExpression(ctx.starredExpression())
 
     # kwargOrDoubleStarred
     #   : NAME '=' expression
-    #   | '**' expression;
+    #   | '**' expression
+    #   | invalidKwarg;
     @_type_check
     def visitKwargOrDoubleStarred(
         self, ctx: PythonParser.KwargOrDoubleStarredContext
     ) -> PyKeywordArgument | PyType:
+        if node := ctx.invalidKwarg():
+            return self.visitInvalidKwarg(node)
+
         if node := ctx.NAME():
             name = self.visitName(node)
             self._access_func_kwarg(name, node)
@@ -2029,6 +2037,28 @@ class PythonVisitor(PythonParserVisitor):
 
         else:
             return PyUnpackKv(self.visitExpression(ctx.expression()))
+
+    # invalidKwarg: NAME '='? | '*' | '**';
+    @_both_passes
+    def visitInvalidKwarg(
+        self, ctx: PythonParser.InvalidKwargContext
+    ) -> Optional[PyKeywordArgument | PyType]:
+        if self.pass_num == 1:
+            self._report_error(
+                PySyntaxError("invalid keyword argument").with_context(ctx)
+            )
+
+        elif self.pass_num == 2:
+            if name_node := ctx.NAME():
+                name = self.visitName(name_node)
+                self._access_func_kwarg(name, name_node)
+                return PyKeywordArgument(name, PyType.ANY)
+
+            elif ctx.STAR():
+                return PyUnpack(PyType.ANY)
+
+            elif ctx.DOUBLESTAR():
+                return PyUnpackKv(PyType.ANY)
 
     # starTargets: starTarget (',' starTarget)* ','?;
     @_type_check

@@ -541,11 +541,15 @@ starredExpression
 
 kwargOrStarred
     : NAME '=' expression
-    | starredExpression;
+    | starredExpression
+    | invalidKwarg;
 
 kwargOrDoubleStarred
     : NAME '=' expression
-    | '**' expression;
+    | '**' expression
+    | invalidKwarg;
+
+invalidKwarg: NAME '='? | '*' | '**';
 
 // ASSIGNMENT TARGETS
 // ==================
