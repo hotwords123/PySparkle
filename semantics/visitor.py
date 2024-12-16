@@ -626,7 +626,10 @@ class PythonVisitor(PythonParserVisitor):
     # returnStmt: 'return' starExpressions?;
     @_type_check
     def visitReturnStmt(self, ctx: PythonParser.ReturnStmtContext):
-        type_ = self.visitStarExpressions(ctx.starExpressions())
+        if node := ctx.starExpressions():
+            type_ = self.visitStarExpressions(node)
+        else:
+            type_ = PyType.NONE
 
         if self._current_scope.scope_type is ScopeType.LOCAL:
             self._parent_function.returned_types.append(type_)
