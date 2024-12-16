@@ -1604,6 +1604,9 @@ class PyTypeTransform(ABC):
 
         return tuple(self.visit_type(t) for t in type_args)
 
+    def visit_maybe_type(self, type: Optional[PyType]) -> Optional[PyType]:
+        return self.visit_type(type) if type is not None else None
+
     @staticmethod
     def chain(*transforms: "PyTypeTransform") -> "PyTypeTransform":
         """

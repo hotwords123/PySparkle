@@ -1,4 +1,5 @@
 import functools
+import io
 import logging
 from pathlib import Path
 from typing import Iterator, Optional
@@ -368,7 +369,31 @@ class PythonLanguageServer(LanguageServer):
         # Construct the signature help.
         param_labels = [param.get_label() for param in parameters]
         return_type = func_type.get_return_type(func_args)
-        func_label = f"({', '.join(param_labels)}) -> {return_type}"
+
+        with io.StringIO() as buf:
+            slash, star = False, False
+
+            buf.write("(")
+
+            for i, param in enumerate(parameters):
+                if i > 0:
+                    buf.write(", ")
+
+                if not slash and not param.posonly:
+                    if i > 0:
+                        buf.write("/, ")
+                    slash = True
+
+                if param.star is not None:
+                    star = True
+                elif not star and param.kwonly:
+                    buf.write("*, ")
+                    star = True
+
+                buf.write(param_labels[i])
+
+            buf.write(f") -> {return_type}")
+            func_label = buf.getvalue()
 
         return lsp.SignatureHelp(
             signatures=[

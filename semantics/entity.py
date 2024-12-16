@@ -443,6 +443,7 @@ class PyParameter(PyVariable):
         annotation: Optional["PythonParser.AnnotationContext"] = None,
         star_annotation: Optional["PythonParser.StarAnnotationContext"] = None,
         default: Optional["PythonParser.DefaultContext"] = None,
+        signature_type: Optional[PyType] = None,
     ):
         """
         Args:
@@ -452,6 +453,7 @@ class PyParameter(PyVariable):
             annotation: The type annotation of the parameter.
             star_annotation: The starred type annotation of the parameter.
             default: The default value of the parameter.
+            signature_type: The type of the parameter in the function signature.
         """
         super().__init__(name, type)
 
@@ -461,6 +463,7 @@ class PyParameter(PyVariable):
         self.annotation = annotation
         self.star_annotation = star_annotation
         self.default = default
+        self.signature_type = signature_type
 
     def __str__(self):
         return f"<parameter {self.star or ''}{self.name}>"
@@ -469,7 +472,7 @@ class PyParameter(PyVariable):
         label = f"{self.star or ''}{self.name}"
 
         if self.type:
-            label += f": {self.type}"
+            label += f": {self.signature_type or self.type}"
         elif self.annotation:
             label += f": {get_node_source(self.annotation.expression())}"
         elif self.star_annotation:
@@ -578,13 +581,14 @@ class PyParameters(list[PyParameter]):
         return PyParameters(
             PyParameter(
                 param.name,
-                transform.visit_type(param.type) if param.type else None,
+                transform.visit_maybe_type(param.type),
                 kwonly=param.kwonly,
                 posonly=param.posonly,
                 star=param.star,
                 annotation=param.annotation,
                 star_annotation=param.star_annotation,
                 default=param.default,
+                signature_type=transform.visit_maybe_type(param.signature_type),
             )
             for param in self
         )

@@ -476,15 +476,7 @@ class PythonVisitor(PythonParserVisitor):
                 type_ = param.get_type()
 
                 if param.star == "**":
-                    if (
-                        isinstance(type_, PyInstanceType)
-                        and type_.cls.full_name == "builtins.dict"
-                        and type_.type_args
-                        and len(type_.type_args) == 2
-                    ):
-                        type_ = type_.type_args[1]
-                    else:
-                        type_ = PyType.ANY
+                    type_ = param.signature_type or PyType.ANY
 
                 self.context.set_node_info(node, symbol=symbol, type=type_)
                 return type_
@@ -1010,7 +1002,7 @@ class PythonVisitor(PythonParserVisitor):
 
             elif self.pass_num == 2:
                 # *args: T translates to args: tuple[T, ...]
-                type_args = (param.type,) if param.type is not None else None
+                type_args = param.signature_type and (param.signature_type,)
                 param.type = PyInstanceType.from_stub("builtins.tuple", type_args)
 
         elif node := ctx.paramNoDefaultStarAnnotation():
@@ -1039,7 +1031,7 @@ class PythonVisitor(PythonParserVisitor):
             # **kwargs: V translates to kwargs: dict[str, V]
             type_args = (
                 PyInstanceType.from_stub("builtins.str"),
-                param.type if param.type is not None else PyType.ANY,
+                param.signature_type or PyType.ANY,
             )
             param.type = PyInstanceType.from_stub("builtins.dict", type_args)
 
@@ -1123,7 +1115,10 @@ class PythonVisitor(PythonParserVisitor):
             annotation = self.visitAnnotation(annotation_node)
 
             if self.pass_num == 2:
-                param.type = annotation
+                if param.star is not None:
+                    param.signature_type = annotation
+                else:
+                    param.type = annotation
 
         return param
 
@@ -1154,7 +1149,7 @@ class PythonVisitor(PythonParserVisitor):
         annotation = self.visitStarAnnotation(annotation_node)
 
         if self.pass_num == 2:
-            param.type = annotation
+            param.signature_type = annotation
 
         return param
 
@@ -1664,7 +1659,8 @@ class PythonVisitor(PythonParserVisitor):
             param.star = "**"
 
         elif self.pass_num == 2:
-            param.type = PyInstanceType.from_stub("builtins.dict")
+            type_args = (PyInstanceType.from_stub("builtins.str"), PyType.ANY)
+            param.type = PyInstanceType.from_stub("builtins.dict", type_args)
 
         return param
 
