@@ -15,7 +15,7 @@ from typeshed_client import get_search_context
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
 from grammar import PythonParser
-from semantics.entity import PyClass, PyFunction, PyModule
+from semantics.entity import PyClass, PyFunction, PyModule, PyParameters
 from semantics.symbol import Symbol
 from semantics.token import TokenKind, TokenModifier, is_blank_token
 from semantics.types import (
@@ -24,6 +24,7 @@ from semantics.types import (
     PyFunctionType,
     PyGenericAlias,
     PyModuleType,
+    PyType,
     PyTypeVarDef,
     match_arguments_to_parameters,
 )
@@ -194,10 +195,13 @@ class PythonLanguageServer(LanguageServer):
             result = f"(module) {type_.module.name}"
 
         elif isinstance(type_, PyClassType):
-            result = f"(class) {type_.cls.full_name}"
+            result = f"(class) {type_.cls.name}"
 
         elif isinstance(type_, PyFunctionType):
-            result = f"({type_.func.tag}) {type_.func.full_name}"
+            func_label, _ = format_signature(
+                type_.get_parameters(), type_.get_return_type()
+            )
+            result = f"({type_.func.tag}) def {type_.func.name}{func_label}"
 
         elif isinstance(type_, PyTypeVarDef | PyGenericAlias):
             result = f"(type) {type_}"
@@ -360,7 +364,7 @@ class PythonLanguageServer(LanguageServer):
             arg_index = 0
 
         signatures = [
-            self.get_signature_information(f, func_args, arg_index) for f in overloads
+            get_signature_information(f, func_args, arg_index) for f in overloads
         ]
         return lsp.SignatureHelp(
             signatures=[s[0] for s in signatures],
@@ -369,92 +373,108 @@ class PythonLanguageServer(LanguageServer):
             ),
         )
 
-    @staticmethod
-    def get_signature_information(
-        func_type: PyFunctionType, func_args: PyArguments, arg_index: int
-    ) -> lsp.SignatureInformation:
-        """
-        Construct a signature information object for the given function type.
 
-        Args:
-            func_type: The function type to construct the signature for.
-            func_args: The arguments passed to the function.
-            arg_index: The index of the active argument.
+def get_signature_information(
+    func_type: PyFunctionType, func_args: PyArguments, arg_index: int
+) -> lsp.SignatureInformation:
+    """
+    Construct a signature information object for the given function type.
 
-        Returns:
-            A signature information object for the given function type.
-        """
-        # Find the corresponding parameter.
-        parameters = func_type.get_parameters()
-        result = match_arguments_to_parameters(func_args, parameters)
+    Args:
+        func_type: The function type to construct the signature for.
+        func_args: The arguments passed to the function.
+        arg_index: The index of the active argument.
 
-        # Compute the matching score to rank the signature.
-        score = (
-            -10 * len(result.mismatched_args)
-            - 5 * len(result.duplicate_args)
-            - 2 * len(result.missing_params)
-        )
+    Returns:
+        A signature information object for the given function type.
+    """
+    # Find the corresponding parameter.
+    parameters = func_type.get_parameters()
+    result = match_arguments_to_parameters(func_args, parameters)
 
-        if (
-            not result.mismatched_args
-            and not result.duplicate_args
-            and not result.missing_params
-        ):
-            # If all arguments match the parameters, add a bonus to the score.
-            score += 5
+    # Compute the matching score to rank the signature.
+    score = (
+        -10 * len(result.mismatched_args)
+        - 5 * len(result.duplicate_args)
+        - 2 * len(result.missing_params)
+    )
 
-        if arg_index < len(func_args):
-            active_param_index = result.matched.get(arg_index, -1)
-        else:
-            active_param_index = result.next_positional
-            if arg_index > 0 and result.is_complete:
-                # If the user typed a comma after the last argument, but there are no
-                # more parameters to fill, penalize the score.
-                score -= 10
+    if (
+        not result.mismatched_args
+        and not result.duplicate_args
+        and not result.missing_params
+    ):
+        # If all arguments match the parameters, add a bonus to the score.
+        score += 5
 
-        # Construct the signature help.
-        param_labels = [param.get_label() for param in parameters]
-        return_type = func_type.get_return_type(func_args)
+    if arg_index < len(func_args):
+        active_param_index = result.matched.get(arg_index, -1)
+    else:
+        active_param_index = result.next_positional
+        if arg_index > 0 and result.is_complete:
+            # If the user typed a comma after the last argument, but there are no
+            # more parameters to fill, penalize the score.
+            score -= 10
 
-        with io.StringIO() as buf:
-            slash, star = False, False
+    # Construct the signature help.
+    return_type = func_type.get_return_type()
+    func_label, param_labels = format_signature(parameters, return_type)
 
-            buf.write("(")
+    logger.info(f"Signature: {func_label}, score: {score}")
 
-            for i, param in enumerate(parameters):
+    signature = lsp.SignatureInformation(
+        label=func_label,
+        documentation=None,
+        parameters=[lsp.ParameterInformation(label=label) for label in param_labels],
+        active_parameter=active_param_index,
+    )
+    return signature, score
+
+
+def format_signature(
+    parameters: PyParameters, return_type: PyType
+) -> tuple[str, list[str]]:
+    """
+    Format a function signature for display in the signature help.
+
+    Args:
+        parameters: The function parameters.
+        return_type: The function return type.
+
+    Returns:
+        A tuple containing the formatted function label and parameter labels.
+    """
+    param_labels = [param.get_label() for param in parameters]
+
+    with io.StringIO() as buf:
+        slash, star = False, False
+
+        buf.write("(")
+
+        for i, param in enumerate(parameters):
+            if i > 0:
+                buf.write(", ")
+
+            if not slash and not param.posonly:
                 if i > 0:
-                    buf.write(", ")
+                    buf.write("/, ")
+                slash = True
 
-                if not slash and not param.posonly:
-                    if i > 0:
-                        buf.write("/, ")
-                    slash = True
+            if param.star is not None:
+                star = True
+            elif not star and param.kwonly:
+                buf.write("*, ")
+                star = True
 
-                if param.star is not None:
-                    star = True
-                elif not star and param.kwonly:
-                    buf.write("*, ")
-                    star = True
+            buf.write(param_labels[i])
 
-                buf.write(param_labels[i])
+        if parameters and not slash:
+            buf.write(", /")
 
-            if parameters and not slash:
-                buf.write(", /")
+        buf.write(f") -> {return_type}")
+        func_label = buf.getvalue()
 
-            buf.write(f") -> {return_type}")
-            func_label = buf.getvalue()
-
-        logger.info(f"Signature: {func_label}, score: {score}")
-
-        signature = lsp.SignatureInformation(
-            label=func_label,
-            documentation=None,
-            parameters=[
-                lsp.ParameterInformation(label=label) for label in param_labels
-            ],
-            active_parameter=active_param_index,
-        )
-        return signature, score
+    return func_label, param_labels
 
 
 server = PythonLanguageServer()
