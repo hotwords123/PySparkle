@@ -8,9 +8,9 @@ from antlr4 import FileStream
 from antlr4.Token import CommonToken
 from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
-from pygls.uris import from_fs_path
+from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
-from typeshed_client import get_search_context
+from typeshed_client import SearchContext
 
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
@@ -112,22 +112,33 @@ class PythonLanguageServer(LanguageServer):
     def __init__(self):
         super().__init__("python-language-server", "v0.1.0")
 
-        search_context = get_search_context()
-        self.analyzer = PythonAnalyzer(search_paths=[search_context.typeshed])
+        self.analyzer: PythonAnalyzer
+        self.root_paths: list[Path] = []
+        self.search_context: Optional[SearchContext] = None
+
         self.documents: dict[str, PyModule] = {}
         self.document_tokens: dict[str, list[CommonToken]] = {}
         self.diagnostics: dict[str, DocumentDiagnostics] = {}
 
-    def init(self):
+    def initialize(self, params: lsp.InitializeParams):
+        if params.root_uri:
+            self.root_paths.append(Path(to_fs_path(params.root_uri)))
+        if params.workspace_folders:
+            self.root_paths.extend(
+                Path(to_fs_path(folder.uri)) for folder in params.workspace_folders
+            )
+
+        logger.warning(f"Root paths: {self.root_paths}")
+        logger.warning(f"Search context: {self.search_context}")
+
+        self.analyzer = PythonAnalyzer(
+            root_paths=self.root_paths,
+            search_context=self.search_context,
+        )
         self.analyzer.load_typeshed()
 
     def parse_document(self, doc: TextDocument):
-        path = Path(doc.path)
-        module_name = path.stem
-        if "." in module_name:
-            raise ValueError("source file name should not contain '.'")
-
-        module = PyModule(module_name, path)
+        module = self.analyzer.create_module(Path(to_fs_path(doc.uri)))
         module.loader = functools.partial(
             PythonSource.parse_uri_source, doc.source, doc.uri
         )
@@ -374,7 +385,6 @@ class PythonLanguageServer(LanguageServer):
         return lsp.CompletionItem(
             label=symbol.name,
             kind=kind,
-            detail=symbol.full_name,
         )
 
     def get_signature_help(
@@ -531,6 +541,11 @@ def format_signature(
 
 
 server = PythonLanguageServer()
+
+
+@server.feature(lsp.INITIALIZE)
+def initialize(ls: PythonLanguageServer, params: lsp.InitializeParams):
+    ls.initialize(params)
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_OPEN)

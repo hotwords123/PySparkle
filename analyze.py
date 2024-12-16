@@ -11,7 +11,7 @@ from antlr4.Token import CommonToken
 from dominate.util import text as dom_text
 from typeshed_client import get_search_context
 
-from core.analysis import PythonAnalyzer
+from core.analysis import PythonAnalyzer, PythonAnalyzerConfig
 from core.source import PythonSource
 from semantics.entity import PyModule
 from semantics.token import TokenKind, is_synthetic_token
@@ -26,26 +26,18 @@ def main(args):
 
     source_path = Path(args.input)
 
-    assert "." not in source_path.stem, "source file name should not contain '.'"
-
-    search_context = get_search_context()
-
-    analyzer = PythonAnalyzer(search_paths=[search_context.typeshed])
+    analyzer = PythonAnalyzer(
+        root_paths=[Path(args.root) if args.root else str(source_path.parent)],
+        search_context=get_search_context(),
+        config=PythonAnalyzerConfig(load_imports=args.imports),
+    )
 
     if args.typeshed:
         analyzer.load_typeshed()
     else:
         analyzer.typeshed_loaded = True
 
-    # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-resolution-ordering
-    search_paths = [
-        source_path.parent,
-        search_context.typeshed,
-        *search_context.search_path,
-    ]
-    analyzer.importer.search_paths = search_paths
-
-    module = PyModule(source_path.stem, source_path)
+    module = analyzer.create_module(source_path)
     module.loader = functools.partial(PythonSource.parse_file, source_path)
     analyzer.load_module(module)
 
@@ -106,8 +98,10 @@ def parse_args(args: Optional[list[str]] = None):
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("input", help="input file")
+    parser.add_argument("-r", "--root", type=str, help="root path")
     parser.add_argument("-o", "--output", help="output file")
     parser.add_argument("--no-typeshed", dest="typeshed", action="store_false", help="do not load typeshed")
+    parser.add_argument("--no-imports", dest="imports", action="store_false", help="do not load imports")
     # fmt: on
 
     return parser.parse_args(args)

@@ -1,8 +1,10 @@
+import dataclasses
 import logging
 from pathlib import Path
 from typing import Final, Optional
 
 from antlr4 import ParserRuleContext
+from typeshed_client import SearchContext
 
 from semantics.entity import PyClass, PyModule, PyPackage
 from semantics.scope import PyDuplicateSymbolError, ScopeType, SymbolTable
@@ -38,26 +40,85 @@ special_form_names: Final = {
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass
+class PythonAnalyzerConfig:
+    """
+    Configuration for the Python analyzer.
+    """
+
+    report_errors: bool = True
+    """Whether to report errors during analysis."""
+    load_imports: bool = True
+    """Whether to load imports during analysis."""
+
+
 class PythonAnalyzer:
-    def __init__(self, search_paths: list[Path], report_errors: bool = True):
+    def __init__(
+        self,
+        root_paths: Optional[list[Path]] = None,
+        search_context: Optional[SearchContext] = None,
+        config: Optional[PythonAnalyzerConfig] = None,
+    ):
+        """
+        Initializes a Python analyzer.
+
+        Args:
+            root_paths: The root paths to search for Python modules.
+            search_context: The search context for the typeshed stubs.
+            config: The configuration for the analyzer.
+        """
+        self.root_paths = root_paths or []
+        self.importer = ModuleManager(
+            self.root_paths, self._load_module, search_context=search_context
+        )
+        self.config = config or PythonAnalyzerConfig()
+
         self.builtin_scope = SymbolTable("builtins", ScopeType.BUILTINS)
         self.type_stubs: dict[str, SymbolTable] = {}
-        self.importer = ModuleManager(search_paths, self._load_module)
-        self.report_errors = report_errors
         self.typeshed_loaded = False
 
         self._pending_second_pass: list[PyModule] = []
         self._module_cls: Optional[PyClass] = None
 
-    def load_module(self, module: PyModule, reload: bool = False):
+    def create_module(self, path: Path) -> PyModule:
+        """
+        Creates a module entity for a given file path.
+
+        The module is not loaded or added to the module manager. In order to load the
+        module, the `loader` attribute on the module must be set to a function that
+        returns the source of the module.
+        """
+        for parent_path in self.root_paths:
+            # Try to find the root path that contains the module.
+            if path.is_relative_to(parent_path):
+                relative_path = path.relative_to(parent_path)
+                parts = relative_path.parts
+                break
+        else:
+            # Otherwise, use a temporary name.
+            parts = ("@", path.stem)
+
+        # Remove any file extensions and convert to module name.
+        parts = [part.split(".")[0] for part in parts]
+
+        if parts[-1] == "__init__":
+            # For packages, remove the last part.
+            module_name = ".".join(parts[:-1])
+            return PyPackage(module_name, path, [path.parent])
+        else:
+            module_name = ".".join(parts)
+            return PyModule(module_name, path)
+
+    def load_module(self, module: PyModule, reload: bool = False) -> bool:
         """
         Loads a Python module.
         """
         if module in self.importer:
             if not reload:
-                return
+                return False
             self.unload_module(module)
         self.importer.load_module(module)
+        return True
 
     def unload_module(self, module: PyModule):
         """
@@ -80,7 +141,8 @@ class PythonAnalyzer:
             visitor = PythonVisitor(module.context)
             visitor.first_pass(module.source.tree)
 
-            self._load_imports(module)
+            if self.config.load_imports:
+                self._load_imports(module)
 
             if self.typeshed_loaded:
                 with self.set_type_context():
@@ -93,10 +155,7 @@ class PythonAnalyzer:
         """
         Reports the errors within a Python module.
         """
-        if not self.report_errors:
-            return
-
-        if module.context.errors:
+        if self.config.report_errors and module.context.errors:
             logger.info(f"In {module}:")
             for error in module.context.errors:
                 logger.error(f"  {error}")
@@ -280,6 +339,14 @@ class PythonAnalyzer:
         """
         Loads the built-in symbols from the typeshed stubs.
         """
+        # Temporarily disable the user search paths.
+        self.importer.search_paths = []
+        try:
+            self._load_typeshed()
+        finally:
+            self.importer.search_paths = self.root_paths
+
+    def _load_typeshed(self):
         builtins_module = self.importer.import_module("builtins")
 
         for symbol in builtins_module.context.global_scope.iter_symbols(

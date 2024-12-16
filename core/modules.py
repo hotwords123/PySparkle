@@ -1,6 +1,8 @@
 import functools
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
+
+from typeshed_client import SearchContext
 
 from core.source import PythonSource
 from semantics.base import SemanticError
@@ -12,15 +14,22 @@ class ModuleManager:
     Manages the finding and loading of Python modules.
     """
 
-    def __init__(self, search_paths: list[Path], loader: Callable[[PyModule], None]):
+    def __init__(
+        self,
+        search_paths: list[Path],
+        loader: Callable[[PyModule], None],
+        search_context: Optional[SearchContext] = None,
+    ):
         """
         Args:
             search_paths: A list of paths to search for modules in.
             loader: The module loader to use for loading modules.
+            search_context: The search context to use for finding stub files.
         """
         self.search_paths = search_paths
         self.loader = loader
-        self.suffixes = [".py", ".pyi"]
+        self.search_context = search_context
+        self.suffixes = [".pyi", ".py"]
         self.modules: dict[str, PyModule] = {}
 
     def __getitem__(self, name: str) -> PyModule:
@@ -59,7 +68,15 @@ class ModuleManager:
             import_paths = package.import_paths
         else:
             # For top-level modules, use the global search paths.
-            import_paths = self.search_paths
+            import_paths = self.search_paths.copy()
+
+            # Add the stubs directory to the search paths.
+            # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-resolution-ordering
+            import_paths.append(self.search_context.typeshed)
+            import_paths.extend(
+                path / f"{last_name}-stubs" for path in self.search_context.search_path
+            )
+            import_paths.extend(self.search_context.search_path)
 
         # According to PEP 420, while looking for a module or package, these paths are
         # searched in order:
@@ -71,16 +88,21 @@ class ModuleManager:
         found_paths: list[Path] = []
 
         for parent_path in import_paths:
-            package_path = parent_path / last_name
+            if is_stubs := parent_path.name.endswith("-stubs"):
+                package_path = parent_path
+            else:
+                package_path = parent_path / last_name
+
             for suffix in self.suffixes:
                 init_path = package_path / f"__init__{suffix}"
                 if init_path.is_file():
                     return PyPackage(name, init_path, [package_path])
 
-            for suffix in self.suffixes:
-                module_path = parent_path / f"{last_name}{suffix}"
-                if module_path.is_file():
-                    return PyModule(name, module_path)
+            if not is_stubs:
+                for suffix in self.suffixes:
+                    module_path = parent_path / f"{last_name}{suffix}"
+                    if module_path.is_file():
+                        return PyModule(name, module_path)
 
             if package_path.is_dir():
                 found_paths.append(package_path)
