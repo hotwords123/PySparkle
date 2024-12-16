@@ -277,7 +277,7 @@ class PyType(ABC):
         """
         return self if self.can_be_falsy() else PyType.NEVER
 
-    def get_return_type(self, args: "PyArguments") -> "PyType":
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> "PyType":
         """
         Returns the type obtained by calling the type.
         """
@@ -487,7 +487,9 @@ class PyInstanceBase(PyType, ABC):
 
         return None
 
-    def get_method_return_type(self, name: str, args: "PyArguments") -> PyType:
+    def get_method_return_type(
+        self, name: str, args: Optional["PyArguments"] = None
+    ) -> PyType:
         if method := self.lookup_method(name):
             return method.get_return_type(args)
 
@@ -499,7 +501,7 @@ class PyInstanceBase(PyType, ABC):
             return True
 
         if method := self.lookup_method("__bool__"):
-            return method.get_return_type(PyArguments()).can_be_truthy()
+            return method.get_return_type().can_be_truthy()
 
         return True
 
@@ -508,14 +510,14 @@ class PyInstanceBase(PyType, ABC):
             return True
 
         if method := self.lookup_method("__bool__"):
-            return method.get_return_type(PyArguments()).can_be_falsy()
+            return method.get_return_type().can_be_falsy()
 
         if method := self.lookup_method("__len__"):
             return True
 
         return False
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
         return self.get_method_return_type("__call__", args)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
@@ -643,8 +645,8 @@ class PyClassType(PyInstanceBase):
             )
         yield from super().attr_scopes()
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
-        if self.cls.full_name == "typing.TypeVar":
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
+        if self.cls.full_name == "typing.TypeVar" and args is not None:
             result = match_arguments_to_parameters(
                 args, self.get_callable_type().get_parameters()
             )
@@ -725,7 +727,7 @@ class PyGenericAlias(PyInstanceBase):
 
         return PyInstanceType(self.cls, self.args)
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
         return self.get_instance_type()
 
     def get_subscripted_type(self, key: PyType) -> PyType:
@@ -835,12 +837,7 @@ class PyInstanceType(PyInstanceBase):
 
 @final
 class PySelfType(PyInstanceType):
-    def __init__(self, cls: "PyClass"):
-        # The `self` type is generic if the class has type parameters.
-        if cls.type_params:
-            type_args = tuple(PyTypeVarType(t) for t in cls.type_params)
-        else:
-            type_args = None
+    def __init__(self, cls: "PyClass", type_args: Optional[PyTypeArgs] = None):
         super().__init__(cls, type_args)
 
     def __str__(self) -> str:
@@ -895,7 +892,7 @@ class PyFunctionType(PyInstanceBase):
     def get_cls(self) -> "PyClass":
         return get_stub_class("types.FunctionType", dummy=True)
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
         visitor = SubstituteTypeVars(self.mapping)
         return visitor.visit_type(self.func.return_type or PyType.ANY)
 
@@ -1237,7 +1234,7 @@ class PyUnionType(PyType):
     def extract_falsy(self) -> PyType:
         return PyUnionType.from_items(t.extract_falsy() for t in self.items)
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
         return PyUnionType.from_items(t.get_return_type(args) for t in self.items)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
@@ -1326,7 +1323,7 @@ class _PyNeverType(PyType):
     def can_be_falsy(self) -> Literal[False]:
         return False
 
-    def get_return_type(self, args: "PyArguments") -> PyType:
+    def get_return_type(self, args: Optional["PyArguments"] = None) -> PyType:
         return PyType.NEVER
 
     def get_subscripted_type(self, key: PyType) -> PyType:
@@ -1719,6 +1716,10 @@ class SubstituteTypeVars(PyTypeTransform):
                 return self.mapping[type.var.name]
 
             return type if self.keep_unknown else PyType.ANY
+
+        if isinstance(type, PySelfType):
+            type_args = self.visit_type_args(type.type_args)
+            return PySelfType(type.cls, type_args)
 
         if isinstance(type, PyInstanceType):
             type_args = self.visit_type_args(type.type_args)

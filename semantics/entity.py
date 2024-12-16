@@ -159,7 +159,12 @@ class PyClass(_ModifiersMixin, PyEntity):
         return PyInstanceType(self)
 
     def get_self_type(self) -> PySelfType:
-        return PySelfType(self)
+        # The `self` type is generic if the class has type parameters.
+        if self.type_params:
+            type_args = tuple(PyTypeVarType(t) for t in self.type_params)
+        else:
+            type_args = None
+        return PySelfType(self, type_args)
 
     def default_type_args(self) -> PyTypeArgs:
         return tuple(PyType.ANY for _ in self.type_params)
@@ -180,22 +185,6 @@ class PyClass(_ModifiersMixin, PyEntity):
 
         for cls in self.mro:
             yield cls.scope
-
-    def lookup_method(self, name: str) -> Optional["PyFunction"]:
-        """
-        Looks up a method in the class and its bases.
-        """
-        for scope in self.mro_scopes():
-            if symbol := scope.get(name):
-                if isinstance(entity := symbol.resolve_entity(), PyFunction):
-                    return entity
-
-        return None
-
-    def get_method_return_type(self, name: str) -> PyType:
-        if method := self.lookup_method(name):
-            return method.return_type or PyType.ANY
-        return PyType.ANY
 
     @property
     def mro(self) -> list["PyClass"]:
