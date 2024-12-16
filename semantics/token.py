@@ -183,8 +183,10 @@ def is_synthetic_token(token: "CommonToken") -> bool:
     """
     Returns whether a token is synthetic, i.e. not part of the source code.
     """
-    return token.type in SYNTHETIC_TOKEN_TYPES or (
-        token.type == PythonParser.NEWLINE and token.text == "<NEWLINE>"
+    return (
+        token.type in SYNTHETIC_TOKEN_TYPES
+        or (token.type == PythonParser.NEWLINE and token.text == "<NEWLINE>")
+        or token.tokenIndex == -1
     )
 
 

@@ -2,7 +2,7 @@ import functools
 import io
 import logging
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, NamedTuple, Optional
 
 from antlr4 import FileStream
 from antlr4.Token import CommonToken
@@ -15,9 +15,10 @@ from typeshed_client import get_search_context
 from core.analysis import PythonAnalyzer
 from core.source import PythonSource, UriSourceStream
 from grammar import PythonParser
+from semantics.base import SemanticError
 from semantics.entity import PyClass, PyFunction, PyModule, PyParameters
 from semantics.symbol import Symbol
-from semantics.token import TokenKind, TokenModifier, is_blank_token
+from semantics.token import TokenKind, TokenModifier, is_blank_token, is_synthetic_token
 from semantics.types import (
     PyArguments,
     PyClassType,
@@ -98,6 +99,11 @@ NON_COMPLETION_TOKENS = {
 logger = logging.getLogger(__name__)
 
 
+class DocumentDiagnostics(NamedTuple):
+    version: Optional[int]
+    dianogstics: list[lsp.Diagnostic]
+
+
 class PythonLanguageServer(LanguageServer):
     """
     A language server for Python.
@@ -109,6 +115,8 @@ class PythonLanguageServer(LanguageServer):
         search_context = get_search_context()
         self.analyzer = PythonAnalyzer(search_paths=[search_context.typeshed])
         self.documents: dict[str, PyModule] = {}
+        self.document_tokens: dict[str, list[CommonToken]] = {}
+        self.diagnostics: dict[str, DocumentDiagnostics] = {}
 
     def init(self):
         self.analyzer.load_typeshed()
@@ -126,10 +134,55 @@ class PythonLanguageServer(LanguageServer):
         self.analyzer.load_module(module, reload=True)
         self.documents[doc.uri] = module
 
+        self.document_tokens[doc.uri] = [
+            token
+            for token in module.source.stream.tokens
+            if not is_synthetic_token(token)
+        ]
+
+        diagnostics: list[lsp.Diagnostic] = []
+        for error in module.context.errors:
+            if isinstance(error, SemanticError) and error.range:
+                start_token, end_token = error.range
+                error_range = lsp.Range(
+                    start=token_start_position(start_token),
+                    end=token_end_position(end_token),
+                )
+                message = error.message
+            else:
+                # Use a placeholder range if the error location is unknown.
+                error_range = lsp.Range(
+                    start=lsp.Position(0, 0),
+                    end=lsp.Position(0, 0),
+                )
+                message = str(error)
+
+            diagnostics.append(
+                lsp.Diagnostic(
+                    range=error_range,
+                    message=message,
+                    severity=lsp.DiagnosticSeverity.Error,
+                )
+            )
+
+        self.diagnostics[doc.uri] = DocumentDiagnostics(doc.version, diagnostics)
+
     def close_document(self, uri: str):
         if uri in self.documents:
             self.analyzer.unload_module(self.documents[uri])
             del self.documents[uri]
+            del self.document_tokens[uri]
+            del self.diagnostics[uri]
+
+    def publish_diagnostics(self):
+        for uri, (version, diagnostics) in self.diagnostics.items():
+            self.text_document_publish_diagnostics(
+                lsp.PublishDiagnosticsParams(
+                    uri=uri,
+                    version=version,
+                    diagnostics=diagnostics,
+                )
+            )
 
     def get_semantic_tokens(self, uri: str) -> Optional[lsp.SemanticTokens]:
         if uri not in self.documents:
@@ -140,7 +193,7 @@ class PythonLanguageServer(LanguageServer):
 
         prev_line, prev_column = 1, 0
 
-        for token in module.source.stream.tokens:
+        for token in self.document_tokens[uri]:
             token: CommonToken
             if is_blank_token(token):
                 continue
@@ -183,7 +236,7 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         module = self.documents[uri]
-        token = token_at_position(module.source.stream.tokens, position, strict=True)
+        token = token_at_position(self.document_tokens[uri], position, strict=True)
         if token is None:
             return None
 
@@ -227,7 +280,7 @@ class PythonLanguageServer(LanguageServer):
             return None
 
         module = self.documents[uri]
-        token = token_at_position(module.source.stream.tokens, position, strict=True)
+        token = token_at_position(self.document_tokens[uri], position, strict=True)
         if token is None:
             return None
 
@@ -262,7 +315,7 @@ class PythonLanguageServer(LanguageServer):
         module = self.documents[uri]
 
         token = token_at_position(
-            module.source.stream.tokens, position, anchor="end", skip_ws=True
+            self.document_tokens[uri], position, anchor="end", skip_ws=True
         )
         if token is None or token.type in NON_COMPLETION_TOKENS:
             return
@@ -332,7 +385,7 @@ class PythonLanguageServer(LanguageServer):
 
         module = self.documents[uri]
         token = token_at_position(
-            module.source.stream.tokens, position, anchor="end", skip_ws=True
+            self.document_tokens[uri], position, anchor="end", skip_ws=True
         )
         if token is None:
             return None
@@ -485,6 +538,7 @@ def did_open(ls: PythonLanguageServer, params: lsp.DidOpenTextDocumentParams):
     logger.info(f"Opened document: {params.text_document.uri}")
     doc = ls.workspace.get_text_document(params.text_document.uri)
     ls.parse_document(doc)
+    ls.publish_diagnostics()
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_CHANGE)
@@ -492,6 +546,7 @@ def did_change(ls: PythonLanguageServer, params: lsp.DidChangeTextDocumentParams
     logger.info(f"Changed document: {params.text_document.uri}")
     doc = ls.workspace.get_text_document(params.text_document.uri)
     ls.parse_document(doc)
+    ls.publish_diagnostics()
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_CLOSE)
