@@ -185,6 +185,10 @@ class PythonLanguageServer(LanguageServer):
             del self.document_tokens[uri]
             del self.diagnostics[uri]
 
+            self.text_document_publish_diagnostics(
+                lsp.PublishDiagnosticsParams(uri=uri, diagnostics=[])
+            )
+
     def publish_diagnostics(self):
         for uri, (version, diagnostics) in self.diagnostics.items():
             self.text_document_publish_diagnostics(
