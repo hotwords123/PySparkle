@@ -370,6 +370,10 @@ class PythonLanguageServer(LanguageServer):
                 yield self.get_symbol_completion(symbol)
             return
 
+        if find_ancestor_node(node, PythonParser.ImportStmtContext):
+            # TODO: Import statement.
+            return
+
         yield from self.get_keyword_completions()
 
         # Yield symbols available in the current scope.

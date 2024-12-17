@@ -1,4 +1,5 @@
 import functools
+import logging
 from ast import literal_eval
 from contextlib import contextmanager
 from typing import Iterator, Literal, NamedTuple, Optional
@@ -44,13 +45,23 @@ from .types import (
     set_forward_ref_evaluator,
 )
 
+logger = logging.getLogger(__name__)
+
 _VisitorAction = Literal["visit", "default", "skip"]
+
+
+class _VisitorSkipped(Exception):
+    """
+    Indicates that a visitor method was skipped due to syntax errors.
+    """
+
+    pass
 
 
 def _visitor_guard(
     first_pass: _VisitorAction = "visit",
     second_pass: _VisitorAction = "visit",
-    error_action: _VisitorAction = "default",
+    visit_error: bool = False,
 ):
     """
     Decorator for visitor methods that performs different actions based on the pass
@@ -59,7 +70,7 @@ def _visitor_guard(
     Args:
         first_pass: The action to perform in the first pass.
         second_pass: The action to perform in the second pass.
-        error_action: The action to perform if the node contains an error.
+        visit_error: Whether to visit nodes that contain errors.
 
     Returns:
         decorator: The decorator function.
@@ -77,17 +88,18 @@ def _visitor_guard(
 
             old_ctx, visitor._current_ctx = visitor._current_ctx, ctx
 
-            action = passes.get(visitor.pass_num, "visit")
-            if ctx.exception is not None:
-                visitor._handle_parser_error(ctx)
-                if action == "visit":
-                    action = error_action
-
             result = None
             try:
+                action = passes.get(visitor.pass_num, "visit")
+                if ctx.exception is not None:
+                    visitor._handle_parser_error(ctx)
+                    if action == "visit" and not visit_error:
+                        result = super(PythonVisitor, visitor).visitChildren(ctx)
+                        raise _VisitorSkipped
+
                 match action:
                     case "visit":
-                        if error_action == "default":
+                        if not visit_error:
                             visitor._visit_error_nodes(ctx)
                         result = func(visitor, ctx, **kwargs)
                     case "default":
@@ -95,8 +107,14 @@ def _visitor_guard(
                     case "skip":
                         pass
 
+            except _VisitorSkipped:
+                if action == "visit":
+                    raise
+
             except Exception as e:
                 visitor._report_error(e)
+                if action == "visit":
+                    raise _VisitorSkipped from e
 
             finally:
                 visitor._current_ctx = old_ctx
@@ -253,14 +271,14 @@ class PythonVisitor(PythonParserVisitor):
         Args:
             error: The error to report.
         """
-        if isinstance(error, SemanticError):
-            if error.range is None and self._current_ctx is not None:
-                error.set_context(self._current_ctx)
+        if not isinstance(error, SemanticError):
+            logger.exception("An error occurred during semantic analysis.")
+            old_error = error
+            error = SemanticError(str(error))
+            error.__cause__ = old_error
 
-        else:
-            import traceback
-
-            traceback.print_exception(type(error), error, error.__traceback__)
+        if error.range is None and self._current_ctx is not None:
+            error.set_context(self._current_ctx)
 
         self.context.errors.append(error)
 
@@ -577,20 +595,20 @@ class PythonVisitor(PythonParserVisitor):
             if isinstance(error, RecognitionException):
                 if error.message and error.offendingToken is not None:
                     self._report_error(
-                        PySyntaxError(error.message, error.offendingToken, ctx.stop)
+                        PySyntaxError(error.message, error.offendingToken)
                     )
             else:
                 self._report_error(PySyntaxError(str(error)).with_context(ctx))
 
     # invalidBlock: INDENT statements DEDENT;
-    @_visitor_guard(error_action="visit")
+    @_visitor_guard(visit_error=True)
     def visitInvalidBlock(self, ctx: PythonParser.InvalidBlockContext):
         if self.pass_num == 1:
             self._report_error(PySyntaxError("unexpected indent").with_context(ctx))
 
         return self.visitChildren(ctx)
 
-    @_visitor_guard(second_pass="skip", error_action="visit")
+    @_visitor_guard(second_pass="skip", visit_error=True)
     def visitInvalidToken(self, ctx: PythonParser.InvalidTokenContext):
         token = ctx.start
         self._report_error(

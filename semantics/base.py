@@ -1,6 +1,6 @@
 from typing import Optional
 
-from antlr4 import ParserRuleContext
+from antlr4 import CommonTokenStream, ParserRuleContext
 from antlr4.Token import CommonToken
 from antlr4.tree.Tree import ParseTree, TerminalNode
 
@@ -15,9 +15,13 @@ class SemanticError(Exception):
         end_token: Optional[CommonToken] = None,
     ):
         self.message = message
-        self.range: Optional[tuple[CommonToken, CommonToken]] = (
-            (token, end_token or token) if token else None
-        )
+        if token:
+            if end_token:
+                self.range = shrink_token_range(token, end_token)
+            else:
+                self.range = token, token
+        else:
+            self.range = None
 
     def __str__(self):
         message = self.message
@@ -31,7 +35,7 @@ class SemanticError(Exception):
         if isinstance(node, TerminalNode):
             self.range = node.getSymbol(), node.getSymbol()
         elif isinstance(node, ParserRuleContext):
-            self.range = node.start, node.stop
+            self.range = shrink_token_range(node.start, node.stop)
 
     def with_context(self, node: ParseTree):
         self.set_context(node)
@@ -78,3 +82,34 @@ def get_node_source(node: ParseTree) -> str:
         return start.getInputStream().getText(start.start, stop.stop)
 
     return node.getText()
+
+
+def shrink_token_range(
+    start: CommonToken, end: CommonToken
+) -> tuple[CommonToken, CommonToken]:
+    """
+    Shrinks a token range to exclude any hidden tokens.
+
+    Args:
+        start: The start token of the range.
+        end: The end token of the range.
+
+    Returns:
+        A tuple of the start and end tokens of the reduced range.
+    """
+    if not isinstance(stream := start.getTokenSource(), CommonTokenStream):
+        return start, end
+
+    start_index, end_index = start.tokenIndex, end.tokenIndex
+    while (
+        start_index < end_index
+        and stream.get(start_index).channel == CommonToken.HIDDEN_CHANNEL
+    ):
+        start_index += 1
+    while (
+        end_index > start_index
+        and stream.get(end_index).channel == CommonToken.HIDDEN_CHANNEL
+    ):
+        end_index -= 1
+
+    return stream.get(start_index), stream.get(end_index)

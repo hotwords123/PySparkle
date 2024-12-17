@@ -38,7 +38,10 @@ class PythonErrorStrategy(DefaultErrorStrategy):
     def singleTokenInsertion(self, recognizer: PythonParser):
         expected_tokens = set(self.getExpectedTokens(recognizer))
         # Do not perform insertion if all expected tokens are structural.
-        if all(token in self.STRUCURAL_TOKENS for token in expected_tokens):
+        if all(
+            token == PythonParser.NAME or token in self.STRUCURAL_TOKENS
+            for token in expected_tokens
+        ):
             return None
 
         return super().singleTokenInsertion(recognizer)
