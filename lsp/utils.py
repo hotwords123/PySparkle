@@ -154,6 +154,35 @@ def is_inside_arguments(
     )
 
 
+def collect_argument_commas(
+    arguments_node: PythonParser.ArgumentsContext,
+) -> list[TerminalNode]:
+    """
+    Collect the comma tokens between arguments in the given arguments node.
+
+    Args:
+        arguments_node: The arguments node to search through.
+
+    Returns:
+        A list of comma tokens between arguments.
+    """
+    commas: list[TerminalNode] = []
+
+    # arguments: args ','? | kwargs;
+    if args_node := arguments_node.args():
+        commas.extend(args_node.COMMA())
+        # args: arg (',' arg)* (',' kwargs)? | kwargs;
+        if kwargs_node := args_node.kwargs():
+            # kwargs
+            #   : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
+            #   | kwargOrDoubleStarred (',' kwargOrDoubleStarred)*;
+            commas.extend(kwargs_node.COMMA())
+    if comma := arguments_node.COMMA():
+        commas.append(comma)
+
+    return commas
+
+
 def get_argument_index(
     arguments_node: PythonParser.ArgumentsContext, token: CommonToken
 ) -> int:
@@ -168,19 +197,7 @@ def get_argument_index(
         The index of the active argument.
     """
     # Collect the comma tokens between arguments.
-    commas: list[TerminalNode] = []
-
-    # arguments: args ','?;
-    if args_node := arguments_node.args():
-        commas.extend(args_node.COMMA())
-        # args: arg (',' arg)* (',' kwargs)? | kwargs;
-        if kwargs_node := args_node.kwargs():
-            # kwargs
-            #   : kwargOrStarred (',' kwargOrStarred)* (',' kwargOrDoubleStarred)?
-            #   | kwargOrDoubleStarred (',' kwargOrDoubleStarred)*;
-            commas.extend(kwargs_node.COMMA())
-    if comma := arguments_node.COMMA():
-        commas.append(comma)
+    commas = collect_argument_commas(arguments_node)
 
     # Collect the token indices of the commas.
     comma_indices = [comma.getSymbol().tokenIndex for comma in commas]

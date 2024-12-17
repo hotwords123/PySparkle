@@ -6,6 +6,7 @@ from typing import Iterator, NamedTuple, Optional
 
 from antlr4 import FileStream
 from antlr4.Token import CommonToken
+from antlr4.tree.Tree import ParseTree, TerminalNode
 from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
@@ -17,6 +18,7 @@ from core.source import PythonSource, UriSourceStream
 from grammar import PythonParser
 from semantics.base import SemanticError
 from semantics.entity import PyClass, PyFunction, PyModule, PyParameters
+from semantics.structure import PyFunctionCall, PythonContext
 from semantics.symbol import Symbol
 from semantics.token import TokenKind, TokenModifier, is_blank_token, is_synthetic_token
 from semantics.types import (
@@ -31,6 +33,7 @@ from semantics.types import (
 )
 
 from .utils import (
+    collect_argument_commas,
     find_ancestor_node,
     get_argument_index,
     is_inside_arguments,
@@ -381,6 +384,8 @@ class PythonLanguageServer(LanguageServer):
         for symbol in scope.iter_symbols(parents=True):
             yield self.get_symbol_completion(symbol)
 
+        yield from self.get_argument_completions(module, token, node)
+
     @staticmethod
     def get_keyword_completions() -> Iterator[lsp.CompletionItem]:
         for keyword in PYTHON_KEYWORDS:
@@ -408,6 +413,65 @@ class PythonLanguageServer(LanguageServer):
             kind=kind,
         )
 
+    def get_argument_completions(
+        self, module: PyModule, token: CommonToken, node: PythonParser.PrimaryContext
+    ) -> Iterator[lsp.CompletionItem]:
+        if func_call := find_function_call(token, node, module.context):
+            call_node, (func_type, func_args) = func_call
+        else:
+            return
+
+        # Check if a keyword argument is desired.
+        separators: list[TerminalNode] = []
+        if lparen := call_node.LPAREN():
+            separators.append(lparen)
+        if genexp_node := call_node.genexp():
+            separators.append(genexp_node.LPAREN())
+        if arguments_node := call_node.arguments():
+            separators.extend(collect_argument_commas(arguments_node))
+
+        separator_indices = [s.getSymbol().tokenIndex for s in separators]
+        if token.tokenIndex < separator_indices[0]:
+            # This should not happen, as the token must be inside the arguments.
+            logger.warning("Token is not inside the arguments.")
+            return
+
+        i, state = token.tokenIndex, "name"
+        while i not in separator_indices:
+            match module.source.stream.get(i).type:
+                case PythonParser.NAME:
+                    if state == "name":
+                        state = "separator"
+                    else:
+                        return
+                case PythonParser.WS:
+                    pass
+                case _:
+                    return
+
+            i -= 1
+
+        param_names: set[str] = set()
+
+        # Find the keyword parameters that have not been filled yet.
+        for overload in func_type.get_overloads():
+            parameters = overload.get_parameters()
+            result = match_arguments_to_parameters(func_args, parameters)
+
+            for param in parameters:
+                if (
+                    not param.posonly
+                    and param.star is None
+                    and param.name not in result.values
+                ):
+                    param_names.add(param.name)
+
+        for param_name in param_names:
+            yield lsp.CompletionItem(
+                label=f"{param_name}=",
+                kind=lsp.CompletionItemKind.Variable,
+            )
+
     def get_signature_help(
         self, uri: str, position: lsp.Position
     ) -> Optional[lsp.SignatureHelp]:
@@ -424,21 +488,11 @@ class PythonLanguageServer(LanguageServer):
         node = node_at_token_index(module.source.tree, token.tokenIndex)
 
         # Find the primary node that contains a valid function call.
-        while node is not None:
-            call_node = find_ancestor_node(node, PythonParser.PrimaryContext)
-            if call_node is None:
-                return None
-
-            func_call = module.context.get_function_call(call_node)
-            if func_call is not None and is_inside_arguments(call_node, token):
-                break
-
-            node = call_node.parentCtx
-
+        if func_call := find_function_call(token, node, module.context):
+            call_node, (func_type, func_args) = func_call
         else:
             return None
 
-        func_type, func_args = func_call
         overloads = func_type.get_overloads()
 
         # Find the index of the active argument.
@@ -456,6 +510,35 @@ class PythonLanguageServer(LanguageServer):
                 range(len(signatures)), key=lambda i: signatures[i][1]
             ),
         )
+
+
+def find_function_call(
+    token: CommonToken, node: ParseTree, context: PythonContext
+) -> Optional[tuple[PythonParser.PrimaryContext, PyFunctionCall]]:
+    """
+    Find the function call node that contains the given token.
+
+    Args:
+        token: The token to find the function call for.
+        node: The node to start searching from.
+        context: The context to use for finding the function call.
+
+    Returns:
+        A tuple containing the function call node and the function call, or None if not
+        found.
+    """
+    while node is not None:
+        call_node = find_ancestor_node(node, PythonParser.PrimaryContext)
+        if call_node is None:
+            return None
+
+        func_call = context.get_function_call(call_node)
+        if func_call is not None and is_inside_arguments(call_node, token):
+            return call_node, func_call
+
+        node = call_node.parentCtx
+
+    return None
 
 
 def get_signature_information(

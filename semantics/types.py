@@ -1405,6 +1405,10 @@ def match_arguments_to_parameters(
 
     for i, arg in enumerate(arguments):
         if isinstance(arg, PyKeywordArgument):
+            # Skip invalid keyword arguments.
+            if arg.name.startswith("invalid:"):
+                continue
+
             # Keyword arguments are matched by name.
             if param := parameters.get_keyword(arg.name):
                 matched[i] = parameters.index(param)

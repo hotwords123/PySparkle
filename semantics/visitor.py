@@ -2137,7 +2137,7 @@ class PythonVisitor(PythonParserVisitor):
             if name_node := ctx.NAME():
                 name = self.visitName(name_node)
                 self._access_func_kwarg(name, name_node)
-                return PyKeywordArgument(name, PyType.ANY)
+                return PyKeywordArgument(f"invalid:{name}", PyType.ANY)
 
             elif ctx.STAR():
                 return PyUnpack(PyType.ANY)
