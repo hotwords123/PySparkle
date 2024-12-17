@@ -295,6 +295,18 @@ class PythonLanguageServer(LanguageServer):
         if token is None:
             return None
 
+        # Check if the symbol is a module.
+        type_ = module.context.get_token_entity_type(token)
+        if isinstance(type_, PyModuleType) and (path := type_.module.path):
+            if target_uri := from_fs_path(str(path)):
+                return lsp.Location(
+                    uri=target_uri,
+                    range=lsp.Range(start=lsp.Position(0, 0), end=lsp.Position(0, 0)),
+                )
+            else:
+                logger.warning(f"Failed to resolve module path: {path}")
+
+        # Check if the symbol refers to another symbol in some module.
         symbol = module.context.get_token_target(token)
         if symbol is None or symbol.token is None:
             return None
@@ -303,6 +315,7 @@ class PythonLanguageServer(LanguageServer):
         if isinstance(input_stream, FileStream):
             target_uri = from_fs_path(input_stream.fileName)
             if target_uri is None:
+                logger.warning(f"Failed to resolve file path: {input_stream.fileName}")
                 return None
         elif isinstance(input_stream, UriSourceStream):
             target_uri = input_stream.uri

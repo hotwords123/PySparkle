@@ -134,9 +134,11 @@ class PyImport:
 
     Attributes:
         path: The list of module names in the import statement.
+        path_symbols: The list of symbols for each module name in the import statement.
     """
 
     path: list[str]
+    path_symbols: list[Symbol]
 
 
 @dataclasses.dataclass
@@ -146,12 +148,12 @@ class PyImportName(PyImport):
 
     Attributes:
         alias: The alias of the imported module, or `None` if not aliased.
-        symbol: The symbol that the import resolves to.
+        alias_symbol: The symbol that the alias resolves to, or `None` if not aliased.
         ctx: The context of the import statement.
     """
 
     alias: Optional[str]
-    symbol: Symbol
+    alias_symbol: Optional[Symbol]
     ctx: PythonParser.ImportNameContext
 
 
@@ -189,9 +191,10 @@ class PyImportFromAsName(NamedTuple):
     Attributes:
         name: The name of the imported entity.
         alias: The alias of the imported entity.
-        symbol: The symbol that the import resolves to.
+        symbols: The symbols of the imported entity. If an alias is provided, it will
+            be a tuple of two symbols: one for the name and one for the alias.
     """
 
     name: str
     alias: Optional[str]
-    symbol: Symbol
+    symbols: tuple[Symbol] | tuple[Symbol, Symbol]

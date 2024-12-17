@@ -674,13 +674,21 @@ class PythonVisitor(PythonParserVisitor):
         relative = num_dots - 1 if num_dots > 0 else None
 
         if dotted_name := ctx.dottedName():
-            path, _ = self.visitDottedName(dotted_name)
+            path, path_symbols = self.visitDottedName(dotted_name)
         else:
-            path = []
+            path, path_symbols = [], []
 
         targets = self.visitImportFromTargets(ctx.importFromTargets())
 
-        self.context.imports.append(PyImportFrom(path, relative, targets, ctx))
+        self.context.imports.append(
+            PyImportFrom(
+                path=path,
+                path_symbols=path_symbols,
+                relative=relative,
+                targets=targets,
+                ctx=ctx,
+            )
+        )
 
     # importFromTargets
     #   : '(' importFromAsNames ','? ')'
@@ -724,6 +732,9 @@ class PythonVisitor(PythonParserVisitor):
         name_node = ctx.NAME(0)
         name = self.visitName(name_node)
 
+        name_symbol = Symbol(SymbolType.IMPORTED, name, name_node, public=False)
+        self.context.set_node_info(name_node, symbol=name_symbol)
+
         if alias_node := ctx.NAME(1):
             alias = self.visitName(alias_node)
 
@@ -734,84 +745,88 @@ class PythonVisitor(PythonParserVisitor):
             symbol = Symbol(
                 SymbolType.IMPORTED, alias, alias_node, public=name == alias
             )
-            self.context.set_node_info(name_node, symbol=symbol)
             self.context.set_node_info(alias_node, symbol=symbol)
 
-        else:
-            alias = None
+            symbols = (name_symbol, symbol)
 
+        else:
             # The name is defined in the current scope.
-            symbol = Symbol(SymbolType.IMPORTED, name, name_node)
-            self.context.set_node_info(name_node, symbol=symbol)
+            alias = None
+            symbols = (name_symbol,)
 
         with self._wrap_errors(PyDuplicateSymbolError):
-            self._current_scope.define(symbol)
+            self._current_scope.define(symbols[-1])
 
-        return PyImportFromAsName(name, alias, symbol)
+        return PyImportFromAsName(
+            name=name,
+            alias=alias,
+            symbols=symbols,
+        )
 
     # dottedAsName: dottedName ('as' NAME)?;
     @_first_pass_only
     def visitDottedAsName(self, ctx: PythonParser.DottedAsNameContext):
+        path, symbols = self.visitDottedName(ctx.dottedName())
+
         if alias_node := ctx.NAME():
-            path, _ = self.visitDottedName(ctx.dottedName())
             alias = self.visitName(alias_node)
 
             # The as-name is defined in the current scope.
             # The import form `import X as X` (a redundant module alias) re-exports
             # symbol `X`.
             # https://typing.readthedocs.io/en/latest/spec/distributing.html#import-conventions
-            symbol = Symbol(
+            alias_symbol = Symbol(
                 SymbolType.IMPORTED, alias, alias_node, public=path == [alias]
             )
-            # The name always refers to a module.
-            self.context.set_node_info(alias_node, kind=TokenKind.MODULE, symbol=symbol)
+            self.context.set_node_info(
+                alias_node, kind=TokenKind.MODULE, symbol=alias_symbol
+            )
 
             with self._wrap_errors(PyDuplicateSymbolError):
-                self._current_scope.define(symbol)
+                self._current_scope.define(alias_symbol)
 
         else:
-            path, symbol = self.visitDottedName(ctx.dottedName(), define=True)
-            alias = None
+            alias, alias_symbol = None, None
 
-        self.context.imports.append(PyImportName(path, alias, symbol, ctx.parentCtx))
+            # The top-level module is defined in the current scope.
+            with self._wrap_errors(PyDuplicateSymbolError):
+                self._current_scope.define(symbols[0])
+
+        self.context.imports.append(
+            PyImportName(
+                path=path,
+                path_symbols=symbols,
+                alias=alias,
+                alias_symbol=alias_symbol,
+                ctx=ctx.parentCtx,
+            )
+        )
 
     # dottedName: dottedName '.' NAME | NAME;
     @_first_pass_only
     def visitDottedName(
-        self, ctx: PythonParser.DottedNameContext, *, define: bool = False
-    ) -> tuple[list[str], Optional[Symbol]]:
+        self, ctx: PythonParser.DottedNameContext
+    ) -> tuple[list[str], list[Symbol]]:
         """
-        Args:
-            define: Whether to define the name in the current scope.
-                True if the dotted name is part of an import-name statement, and no
-                as-name is provided.
-
         Returns:
             path: The list of module names in the dotted name.
-            symbol: The top-level module symbol, if defined.
+            symbols: The list of module symbols.
         """
         name_node = ctx.NAME()
         name = self.visitName(name_node)
 
+        symbol = Symbol(SymbolType.IMPORTED, name, name_node, public=False)
         # The name always refers to a module.
-        self.context.set_node_info(name_node, kind=TokenKind.MODULE)
+        self.context.set_node_info(name_node, kind=TokenKind.MODULE, symbol=symbol)
 
         if dotted_name := ctx.dottedName():
-            path, symbol = self.visitDottedName(dotted_name, define=define)
+            path, symbols = self.visitDottedName(dotted_name)
             path.append(name)
-            return path, symbol
+            symbols.append(symbol)
+            return path, symbols
 
         else:
-            symbol = None
-            if define:
-                # The top-level module is defined in the current scope.
-                symbol = Symbol(SymbolType.IMPORTED, name, name_node)
-                self.context.set_node_info(name_node, symbol=symbol)
-
-                with self._wrap_errors(PyDuplicateSymbolError):
-                    self._current_scope.define(symbol)
-
-            return [name], symbol
+            return [name], [symbol]
 
     # block
     #   : NEWLINE INDENT statements DEDENT

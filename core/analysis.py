@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 from typing import Final, Optional
 
-from antlr4 import ParserRuleContext
 from typeshed_client import SearchContext
 
 from semantics.entity import PyClass, PyModule, PyPackage
@@ -190,16 +189,20 @@ class PythonAnalyzer:
         Loads the imports for a Python module.
         """
         for stmt in module.context.imports:
-            if isinstance(stmt, PyImportName):
-                self._load_import_name(module.context, stmt)
-            elif isinstance(stmt, PyImportFrom):
-                if isinstance(module, PyPackage):
-                    base_name = module.name
-                else:
-                    base_name = module.package
-                self._load_import_from(base_name, module.context, stmt)
+            try:
+                if isinstance(stmt, PyImportName):
+                    self._load_import_name(stmt)
 
-    def _load_import_name(self, context: PythonContext, stmt: PyImportName):
+                elif isinstance(stmt, PyImportFrom):
+                    if isinstance(module, PyPackage):
+                        base_name = module.name
+                    else:
+                        base_name = module.package
+                    self._load_import_from(base_name, module.context, stmt)
+            except PyImportError as e:
+                module.context.errors.append(e.with_context(stmt.ctx))
+
+    def _load_import_name(self, stmt: PyImportName):
         """
         Loads an import-name statement for a Python module.
 
@@ -207,25 +210,18 @@ class PythonAnalyzer:
             context: The context of the Python module.
             stmt: The import-name statement to load.
         """
-        try:
-            imported_module = self.importer.import_module(".".join(stmt.path))
-        except PyImportError as e:
-            context.errors.append(e.with_context(stmt.ctx))
-            return
+        # Import the top-level module object.
+        module = self.importer.import_module(stmt.path[0])
+        stmt.path_symbols[0].set_entity(module)
 
-        if stmt.alias is not None:
-            # If an alias is provided, the symbol refers to the imported
-            # module object.
-            stmt.symbol.set_entity(imported_module)
+        # Import the submodules as attributes.
+        module = self._import_and_define_submodules(
+            module, stmt.path[1:], stmt.path_symbols[1:]
+        )
 
-        else:
-            # Otherwise, the symbol refers to the top-level module object,
-            # and the submodules are imported as attributes.
-            module = self.importer[stmt.path[0]]
-            stmt.symbol.set_entity(module)
-
-            for name in stmt.path[1:]:
-                module = self._import_and_define_module(module, name, stmt.ctx)
+        # If an alias is provided, the symbol refers to the imported module object.
+        if stmt.alias_symbol is not None:
+            stmt.alias_symbol.set_entity(module)
 
     def _load_import_from(
         self, base_name: str, context: PythonContext, stmt: PyImportFrom
@@ -238,100 +234,113 @@ class PythonAnalyzer:
             context: The context of the Python module.
             stmt: The import-from statement to load.
         """
-        try:
-            if stmt.relative is not None:
-                # Ensure that the relative import is valid.
-                if not base_name:
-                    raise PyImportError(
-                        "." * (1 + stmt.relative) + ".".join(stmt.path),
-                        "attempted relative import with no known parent package",
-                    )
+        if stmt.relative is not None:
+            # Ensure that the relative import is valid.
+            if not base_name:
+                raise PyImportError(
+                    "attempted relative import with no known parent package",
+                )
 
-                # Resolve the full path of the module to import from.
-                base_path = base_name.split(".")
-                if (offset := len(base_path) - stmt.relative) <= 0:
-                    raise PyImportError(
-                        "." * (1 + stmt.relative) + ".".join(stmt.path),
-                        "attempted relative import beyond top-level package",
-                    )
-                path = base_path[:offset] + stmt.path
+            # Resolve the full path of the module to import from.
+            base_path = base_name.split(".")
+            if (offset := len(base_path) - stmt.relative) <= 0:
+                raise PyImportError(
+                    "attempted relative import beyond top-level package",
+                )
 
-            else:
-                path = stmt.path
+            # Import the module that the import statement is relative to.
+            module = self.importer.import_module(".".join(base_path[:offset]))
+            module = self._import_and_define_submodules(
+                module, stmt.path, stmt.path_symbols
+            )
 
-            imported_module = self.importer.import_module(".".join(path))
+        else:
+            # Import the top-level module object.
+            module = self.importer.import_module(stmt.path[0])
+            stmt.path_symbols[0].set_entity(module)
 
-        except PyImportError as e:
-            context.errors.append(e.with_context(stmt.ctx))
-            return
+            # Import the submodules as attributes.
+            module = self._import_and_define_submodules(
+                module, stmt.path[1:], stmt.path_symbols[1:]
+            )
 
-        imported_scope = imported_module.context.global_scope
+        imported_scope = module.context.global_scope
 
         if stmt.targets.as_names is not None:
             # Import specific symbols from the module.
-            for name, _, symbol in stmt.targets.as_names:
-                if target_symbol := imported_scope.get(name):
-                    # If the imported module has an attribute by the name, import it.
-                    if symbol is not target_symbol:
+            for name, _, symbols in stmt.targets.as_names:
+                target_symbol = imported_scope.get(name)
+
+                # If the imported module has an attribute by the name, import it.
+                # Note that we also check if the target symbol is the imported symbol.
+                # This may happen if a module is importing itself, for example in
+                # package __init__.py files.
+                if target_symbol is not None and target_symbol not in symbols:
+                    for symbol in symbols:
                         symbol.target = target_symbol
+                    continue
 
-                    # Special case: importing from self.
-                    if (
-                        imported_module.name == base_name
-                        and target_symbol.type is SymbolType.IMPORTED
-                        and target_symbol.resolve_entity() is None
-                    ):
-                        try:
-                            symbol.set_entity(
-                                self.importer.import_module(f"{base_name}.{name}")
-                            )
-                        except PyImportError as e:
-                            context.errors.append(e.with_context(stmt.ctx))
+                # Otherwise, attempt to import a submodule with the name.
+                try:
+                    submodule = self._import_and_define_module(module, name)
+                except PyImportError:
+                    context.errors.append(
+                        PyImportError(
+                            f"Cannot import name {name!r} from {module.name!r}"
+                        ).with_context(stmt.ctx)
+                    )
+                    continue
 
-                else:
-                    # Otherwise, attempt to import a submodule with the name.
-                    try:
-                        self._import_and_define_module(imported_module, name, stmt.ctx)
-                        symbol.target = imported_scope[name]
-                    except PyImportError as e:
-                        e.message = (
-                            f"Cannot import name {name!r} from {imported_module.name!r}"
-                        )
-                        context.errors.append(e.with_context(stmt.ctx))
+                for symbol in symbols:
+                    symbol.set_entity(submodule)
 
         else:
             # Import all public symbols from the module.
             for target_symbol in imported_scope.iter_symbols(public_only=True):
-                symbol = Symbol(
+                alias_symbol = Symbol(
                     SymbolType.IMPORTED, target_symbol.name, target=target_symbol
                 )
 
                 try:
-                    context.global_scope.define(symbol)
+                    context.global_scope.define(alias_symbol)
                 except PyDuplicateSymbolError as e:
                     context.errors.append(e.with_context(stmt.ctx))
 
-    def _import_and_define_module(
-        self, module: PyModule, name: str, ctx: ParserRuleContext
+    def _import_and_define_submodules(
+        self, module: PyModule, path: list[str], symbols: list[Symbol]
     ) -> PyModule:
+        """
+        Imports and defines submodules in the global scope of a module.
+
+        Args:
+            module: The top-level module to import the submodules into.
+            path: The list of submodule names to import.
+            symbols: The list of symbols for each submodule name.
+
+        Returns:
+            module: The last submodule that was imported.
+        """
+        for i, name in enumerate(path):
+            module = self._import_and_define_module(module, name)
+            symbols[i].set_entity(module)
+        return module
+
+    def _import_and_define_module(self, module: PyModule, name: str) -> PyModule:
         """
         Imports and defines a submodule in the global scope of a module.
 
         Args:
             module: The module to import the submodule into.
             name: The name of the submodule to import.
-            ctx: The context of the import statement.
 
         Returns:
             submodule: The imported submodule.
         """
         submodule = self.importer.import_module(f"{module.name}.{name}")
-        symbol = Symbol(SymbolType.IMPORTED, name, entity=submodule)
 
-        try:
+        if name not in module.context.global_scope:
+            symbol = Symbol(SymbolType.IMPORTED, name, entity=submodule)
             module.context.global_scope.define(symbol)
-        except PyDuplicateSymbolError as e:
-            module.context.errors.append(e.with_context(ctx))
 
         return submodule
 

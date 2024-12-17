@@ -64,7 +64,7 @@ class ModuleManager:
             # For submodules, use the parent package's import paths.
             package = self.import_module(".".join(parent_names))
             if not isinstance(package, PyPackage):
-                raise PyImportError(package.name, f"{package.name!r} is not a package")
+                raise PyImportError(f"{package.name!r} is not a package")
             import_paths = package.import_paths
         else:
             # For top-level modules, use the global search paths.
@@ -110,7 +110,7 @@ class ModuleManager:
         if found_paths:
             return PyPackage(name, None, found_paths)
 
-        raise PyImportError(name, f"module {name!r} not found")
+        raise PyImportError(f"module {name!r} not found")
 
     def load_module(self, module: PyModule):
         self.modules[module.name] = module
@@ -129,6 +129,4 @@ class ModuleManager:
 
 
 class PyImportError(SemanticError):
-    def __init__(self, module_name: str, message: str):
-        super().__init__(message)
-        self.module_name = module_name
+    pass
