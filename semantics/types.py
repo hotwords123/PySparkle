@@ -404,6 +404,12 @@ class PyType(ABC):
         """
         return None
 
+    def is_annotation(self) -> bool:
+        """
+        Returns whether the type is a type annotation.
+        """
+        return False
+
 
 @final
 class _PyAnyType(PyType):
@@ -567,6 +573,9 @@ class PyTypeVarDef(PyInstanceBase):
     def get_annotated_type(self) -> PyType:
         return PyTypeVarType(self.var)
 
+    def is_annotation(self) -> Literal[True]:
+        return True
+
 
 class PyTypeVarType(PyType):
     """
@@ -675,7 +684,13 @@ class PyClassType(PyInstanceBase):
         return PyGenericAlias(self.cls, args)
 
     def get_annotated_type(self) -> PyType:
+        if self.cls.full_name in ("typing.NoReturn", "typing.Never"):
+            return PyType.NEVER
+
         return self.cls.get_instance_type()
+
+    def is_annotation(self) -> Literal[True]:
+        return True
 
     @classmethod
     def from_stub(cls, name: str) -> PyType:
@@ -782,6 +797,9 @@ class PyGenericAlias(PyInstanceBase):
                 return PyType.ANY
 
         return self.get_instance_type()
+
+    def is_annotation(self) -> Literal[True]:
+        return True
 
     @classmethod
     def from_stub(cls, name: str, args: PyTypeArgs) -> PyType:
@@ -966,6 +984,9 @@ class _PyNoneType(PyInstanceBase):
         # None stands its own type in type annotations.
         return self
 
+    def is_annotation(self) -> Literal[True]:
+        return True
+
 
 PyType.NONE = _PyNoneType()
 
@@ -1031,6 +1052,9 @@ class PyLiteralType(PyInstanceBase):
 
         # Other literals cannot be directly used for type annotations.
         return PyType.ANY
+
+    def is_annotation(self) -> bool:
+        return type(self.value) is str
 
     def get_inferred_type(self) -> PyType:
         return self.get_cls().get_instance_type()

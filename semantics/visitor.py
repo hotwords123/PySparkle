@@ -12,6 +12,7 @@ from grammar import PythonParser, PythonParserVisitor
 
 from .base import PySyntaxError, SemanticError
 from .entity import PyClass, PyFunction, PyLambda, PyParameter, PyVariable
+from .operators import get_binary_op_type, get_unary_op_type
 from .scope import PyDuplicateSymbolError, PySymbolNotFoundError, ScopeType, SymbolTable
 from .structure import (
     PyImportFrom,
@@ -37,7 +38,6 @@ from .types import (
     PyTupleType,
     PyType,
     PyTypeError,
-    PyTypeVarDef,
     PyUnionType,
     PyUnpack,
     PyUnpackKv,
@@ -646,7 +646,13 @@ class PythonVisitor(PythonParserVisitor):
         value_type: Optional[PyType],
     ):
         if isinstance(annotation, PyClassType):
-            if annotation.cls.full_name == "typing.Final":
+            if annotation.cls.full_name == "typing.ClassVar":
+                if value_type is not None:
+                    return value_type.get_inferred_type()
+
+                return PyType.ANY
+
+            elif annotation.cls.full_name == "typing.Final":
                 if value_type is not None:
                     return value_type
 
@@ -654,18 +660,29 @@ class PythonVisitor(PythonParserVisitor):
                     ctx.expression()
                 )
 
-            elif annotation.cls.full_name == "typing.Never":
-                return PyType.NEVER
-
             elif annotation.cls.full_name == "typing.TypeAlias":
-                if (
-                    isinstance(value_type, PyTypeVarDef | PyClassType | PyGenericAlias)
-                    or value_type is PyType.NONE
-                ):
+                if value_type.is_annotation():
                     return value_type
 
                 raise PyTypeError("expected type alias").with_context(
                     ctx.assignmentRhs() or ctx.expression()
+                )
+
+        elif isinstance(annotation, PyGenericAlias):
+            if annotation.cls.full_name == "typing.ClassVar":
+                if len(annotation.args) == 1:
+                    return annotation.args[0]
+
+                raise PyTypeError("ClassVar requires one type argument").with_context(
+                    ctx.expression()
+                )
+
+            elif annotation.cls.full_name == "typing.Final":
+                if len(annotation.args) == 1:
+                    return annotation.args[0]
+
+                raise PyTypeError("Final requires one type argument").with_context(
+                    ctx.expression()
                 )
 
         return annotation.get_annotated_type()
@@ -1391,12 +1408,12 @@ class PythonVisitor(PythonParserVisitor):
             return type_
 
     # starExpression
-    #   : '*' bitwise
+    #   : '*' numeric
     #   | expression;
     @_type_check
     def visitStarExpression(self, ctx: PythonParser.StarExpressionContext) -> PyType:
         if ctx.STAR():
-            return PyUnpack(self.visitBitwise(ctx.bitwise()))
+            return PyUnpack(self.visitNumeric(ctx.numeric()))
         else:
             return self.visitExpression(ctx.expression())
 
@@ -1417,14 +1434,14 @@ class PythonVisitor(PythonParserVisitor):
         ]
 
     # starNamedExpression
-    #   : '*' bitwise
+    #   : '*' numeric
     #   | namedExpression;
     @_type_check
     def visitStarNamedExpression(
         self, ctx: PythonParser.StarNamedExpressionContext
     ) -> PyType:
         if ctx.STAR():
-            return PyUnpack(self.visitBitwise(ctx.bitwise()))
+            return PyUnpack(self.visitNumeric(ctx.numeric()))
         else:
             return self.visitNamedExpression(ctx.namedExpression())
 
@@ -1487,14 +1504,14 @@ class PythonVisitor(PythonParserVisitor):
         else:
             return self.visitComparison(ctx.comparison())
 
-    # comparison: bitwise compareOpBitwisePair*;
+    # comparison: numeric compareOpNumericPair*;
     @_type_check
     def visitComparison(self, ctx: PythonParser.ComparisonContext) -> PyType:
-        type_ = self.visitBitwise(ctx.bitwise())
+        type_ = self.visitNumeric(ctx.numeric())
 
-        pairs = ctx.compareOpBitwisePair()
+        pairs = ctx.compareOpNumericPair()
         for pair in pairs:
-            self.visitCompareOpBitwisePair(pair)
+            self.visitCompareOpNumericPair(pair)
 
         if pairs:
             # TODO: The result of a comparison is not necessarily a boolean for
@@ -1503,7 +1520,31 @@ class PythonVisitor(PythonParserVisitor):
         else:
             return type_
 
-    # TODO: bitwise, arithmetic
+    # numeric
+    #   :<assoc=right> numeric binaryOp='**' numeric
+    #   | unaryOp=('+' | '-' | '~') numeric
+    #   | numeric binaryOp=('*' | '/' | '//' | '%' | '@') numeric
+    #   | numeric binaryOp=('+' | '-') numeric
+    #   | numeric binaryOp=('<<' | '>>') numeric
+    #   | numeric binaryOp='&' numeric
+    #   | numeric binaryOp='^' numeric
+    #   | numeric binaryOp='|' numeric
+    #   | awaitPrimary;
+    @_type_check
+    def visitNumeric(self, ctx: PythonParser.NumericContext) -> PyType:
+        if unary_op := ctx.unaryOp:
+            type_ = self.visitNumeric(ctx.numeric(0))
+
+            return get_unary_op_type(unary_op.text, type_)
+
+        elif binary_op := ctx.binaryOp:
+            left_type = self.visitNumeric(ctx.numeric(0))
+            right_type = self.visitNumeric(ctx.numeric(1))
+
+            return get_binary_op_type(binary_op.text, left_type, right_type)
+
+        else:
+            return self.visitAwaitPrimary(ctx.awaitPrimary())
 
     # awaitPrimary
     #   : 'await' primary
@@ -1933,14 +1974,14 @@ class PythonVisitor(PythonParserVisitor):
         ]
 
     # doubleStarredKvpair
-    #   : '**' bitwise
+    #   : '**' numeric
     #   | kvpair;
     @_type_check
     def visitDoubleStarredKvpair(
         self, ctx: PythonParser.DoubleStarredKvpairContext
     ) -> PyDictDisplayItem:
         if ctx.DOUBLESTAR():
-            return PyUnpackKv(self.visitBitwise(ctx.bitwise()))
+            return PyUnpackKv(self.visitNumeric(ctx.numeric()))
         else:
             return self.visitKvpair(ctx.kvpair())
 

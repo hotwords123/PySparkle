@@ -329,14 +329,14 @@ starExpressions
     : starExpression (',' starExpression)* ','?;
 
 starExpression
-    : '*' bitwise
+    : '*' numeric
     | expression;
 
 starNamedExpressions
     : starNamedExpression (',' starNamedExpression)* ','?;
 
 starNamedExpression
-    : '*' bitwise
+    : '*' numeric
     | namedExpression;
 
 assignmentExpression
@@ -356,33 +356,27 @@ logical
 // --------------------
 
 comparison
-    : bitwise compareOpBitwisePair*;
+    : numeric compareOpNumericPair*;
 
-compareOpBitwisePair
-    : compareOp bitwise;
+compareOpNumericPair
+    : compareOp numeric;
 
 compareOp
     : '==' | '!=' | '<=' | '<' | '>=' | '>'
     | 'in' | 'not' 'in' | 'is' | 'is' 'not';
 
-// Bitwise operators
+// Numeric operators
 // -----------------
 
-bitwise
-    : bitwise ('<<' | '>>') bitwise
-    | bitwise '&' bitwise
-    | bitwise '^' bitwise
-    | bitwise '|' bitwise
-    | arithmetic;
-
-// Arithmetic operators
-// --------------------
-
-arithmetic
-    :<assoc=right> arithmetic '**' arithmetic
-    | ('+' | '-' | '~') arithmetic
-    | arithmetic ('*' | '/' | '//' | '%' | '@') arithmetic
-    | arithmetic ('+' | '-') arithmetic
+numeric
+    :<assoc=right> numeric binaryOp='**' numeric
+    | unaryOp=('+' | '-' | '~') numeric
+    | numeric binaryOp=('*' | '/' | '//' | '%' | '@') numeric
+    | numeric binaryOp=('+' | '-') numeric
+    | numeric binaryOp=('<<' | '>>') numeric
+    | numeric binaryOp='&' numeric
+    | numeric binaryOp='^' numeric
+    | numeric binaryOp='|' numeric
     | awaitPrimary;
 
 // Primary elements
@@ -492,7 +486,7 @@ doubleStarredKvpairs
     : doubleStarredKvpair (',' doubleStarredKvpair)* ','?;
 
 doubleStarredKvpair
-    : '**' bitwise
+    : '**' numeric
     | kvpair;
 
 kvpair: expression ':' expression;
