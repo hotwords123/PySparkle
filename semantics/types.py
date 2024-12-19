@@ -521,7 +521,7 @@ class PyInstanceBase(PyType, ABC):
         return self.get_method_return_type("__call__", args)
 
     def get_subscripted_type(self, key: PyType) -> PyType:
-        return self.get_method_return_type("__getitem__", PyArguments([key]))
+        return self.get_method_return_type("__getitem__", PyArguments(key))
 
     def check_protocol(self, protocol: "PyClass") -> Optional[PyTypeArgs]:
         # For some reason, some ABCs (e.g. typing.Mapping) are not marked as protocols.
@@ -1363,6 +1363,9 @@ class PyArguments(list[PyType | PyKeywordArgument]):
     The list can contain positional arguments, keyword arguments, and unpacked items or
     key-value pairs.
     """
+
+    def __init__(self, *args: PyType | PyKeywordArgument):
+        super().__init__(args)
 
     def get_positionals(self) -> list[PyType]:
         return [

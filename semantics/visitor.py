@@ -1553,7 +1553,7 @@ class PythonVisitor(PythonParserVisitor):
             with self._set_called_function(type_) as func:
                 if genexp := ctx.genexp():
                     arg_type = self.visitGenexp(genexp)
-                    args = PyArguments([arg_type])
+                    args = PyArguments(arg_type)
                 elif arguments := ctx.arguments():
                     args = self.visitArguments(arguments)
                 else:
