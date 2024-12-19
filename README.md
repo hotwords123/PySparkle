@@ -69,9 +69,23 @@ For detailed options, see `python start_server.py --help`.
 
 NOTE: The `--python-executable` and `--python-path` options are used to specify the Python environment for the code that is being analyzed, NOT the language server itself.
 
-### VSCode extension
+## VSCode extension
 
-The VSCode extension is available at [pysparkle-vscode](https://github.com/hotwords123/pysparkle-vscode). Install it by copying the `pysparkle-vscode` directory to the `.vscode/extensions` directory in your home directory or some workspace directory. You may need to manually activate the extension in the Extensions view.
+The VSCode extension is available at [pysparkle-vscode](https://github.com/hotwords123/pysparkle-vscode).
+
+### Installation
+
+The extension is not published on the VSCode Marketplace yet. You can install it following the instructions below:
+
+1. Clone the repository.
+2. Install the dependencies: `npm install`.
+3. Build the extension: `npm run compile`.
+4. Copy the `pysparkle-vscode` directory to the `.vscode/extensions` directory in your home directory or some workspace directory.
+5. Activate the extension in the Extensions view.
+
+If the extension is successfully installed and activated, you should see a pop-up message saying "PySparkle is now active.". To check if the language server is running, open the Output view and select "PySparkle" from the dropdown menu.
+
+### Configuration
 
 The following settings are required in order to make the extension work:
 
