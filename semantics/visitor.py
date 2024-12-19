@@ -27,6 +27,7 @@ from .types import (
     PyClassType,
     PyDictDisplayItem,
     PyFunctionType,
+    PyGenericAlias,
     PyInstanceType,
     PyKeywordArgument,
     PyKvPair,
@@ -36,6 +37,7 @@ from .types import (
     PyTupleType,
     PyType,
     PyTypeError,
+    PyTypeVarDef,
     PyUnionType,
     PyUnpack,
     PyUnpackKv,
@@ -621,17 +623,52 @@ class PythonVisitor(PythonParserVisitor):
         annotation = self.visitExpression(ctx.expression())
 
         if assignment_rhs := ctx.assignmentRhs():
-            self.visitAssignmentRhs(assignment_rhs)
+            type_ = self.visitAssignmentRhs(assignment_rhs)
+        else:
+            type_ = None
 
         if self.pass_num == 1:
             self.visitSingleTarget(ctx.singleTarget(), define=True)
 
         elif self.pass_num == 2:
-            annotation: PyType
-            self.visitSingleTarget(
-                ctx.singleTarget(),
-                value_type=annotation.get_annotated_type(),
-            )
+            try:
+                value_type = self._get_annotated_assignment_type(ctx, annotation, type_)
+            except PyTypeError as e:
+                self._report_error(e)
+                value_type = PyType.ANY
+
+            self.visitSingleTarget(ctx.singleTarget(), value_type=value_type)
+
+    def _get_annotated_assignment_type(
+        self,
+        ctx: PythonParser.AnnotatedAssignmentContext,
+        annotation: PyType,
+        value_type: Optional[PyType],
+    ):
+        if isinstance(annotation, PyClassType):
+            if annotation.cls.full_name == "typing.Final":
+                if value_type is not None:
+                    return value_type
+
+                raise PyTypeError("final variable must be initialized").with_context(
+                    ctx.expression()
+                )
+
+            elif annotation.cls.full_name == "typing.Never":
+                return PyType.NEVER
+
+            elif annotation.cls.full_name == "typing.TypeAlias":
+                if (
+                    isinstance(value_type, PyTypeVarDef | PyClassType | PyGenericAlias)
+                    or value_type is PyType.NONE
+                ):
+                    return value_type
+
+                raise PyTypeError("expected type alias").with_context(
+                    ctx.assignmentRhs() or ctx.expression()
+                )
+
+        return annotation.get_annotated_type()
 
     # (starTargets '=')+ assignmentRhs
     @_type_check

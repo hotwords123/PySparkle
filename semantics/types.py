@@ -732,8 +732,25 @@ class PyGenericAlias(PyInstanceBase):
         return self.get_instance_type()
 
     def get_subscripted_type(self, key: PyType) -> PyType:
-        # TODO: Generic alias like `list[T]` can be further subscripted.
-        return PyType.ANY
+        type_args = key.types if isinstance(key, PyTupleType) else (key,)
+        type_args = tuple(
+            t if t is PyType.ELLIPSIS else t.get_annotated_type() for t in type_args
+        )
+
+        # Collect the type variables used in the type arguments.
+        visitor = CollectTypeVars()
+        visitor.visit_type_args(self.args)
+        type_vars = visitor.type_vars
+
+        # Check if the type arguments are compatible with the type parameters.
+        if len(type_args) != len(type_vars):
+            report_type_error(PyTypeError("Invalid number of type arguments"))
+            return PyType.ANY
+
+        # Substitute the type variables with the type arguments.
+        mapping = {var.name: arg for var, arg in zip(type_vars, type_args)}
+        visitor = SubstituteTypeVars(mapping)
+        return PyGenericAlias(self.cls, visitor.visit_type_args(self.args))
 
     def get_annotated_type(self) -> PyType:
         # Check if the alias is a special form.

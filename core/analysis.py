@@ -28,11 +28,36 @@ special_form_names: Final = {
         "Tuple",
         "Final",
         "Literal",
+        # Introduced in Python 3.11.
+        "Self",
+        "Never",
+        "Unpack",
+        "Required",
+        "NotRequired",
+        "LiteralString",
+        # Introduced in Python 3.10.
+        "Concatenate",
+        "TypeAlias",
+        "TypeGuard",
+        # Introduced in Python 3.9.
+        "Annotated",
     },
     "typing_extensions": {
         "Protocol",
         "Final",
         "Literal",
+        "Annotated",
+        "Concatenate",
+        "TypeAlias",
+        "TypeGuard",
+        "Self",
+        "Never",
+        "Required",
+        "NotRequired",
+        "LiteralString",
+        "Unpack",
+        "ReadOnly",
+        "TypeIs",
     },
 }
 
